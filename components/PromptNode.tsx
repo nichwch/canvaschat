@@ -77,14 +77,15 @@ function PromptNode({ id, data, selected }: NodeProps<PromptFlowNode>) {
         selected ? "border-neutral-900" : "border-neutral-300"
       }`}
     >
-      <div className="flex items-center gap-2 border-b border-neutral-200 p-2">
+      <div className="flex cursor-grab items-center gap-2 border-b border-neutral-200 p-2 active:cursor-grabbing">
         <input
-          className="nodrag min-w-0 flex-1 text-neutral-500 outline-none"
+          className="nodrag w-64 cursor-text text-neutral-500 outline-none"
           value={data.model}
           onChange={(e) => updateNodeData(id, { model: e.target.value })}
           spellCheck={false}
           title="openrouter model"
         />
+        <span className="flex-1" />
         <button className="nodrag text-neutral-500 hover:text-neutral-900" onClick={fork}>
           fork
         </button>
