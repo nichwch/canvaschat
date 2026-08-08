@@ -107,9 +107,11 @@ function CanvasInner() {
         onNodesChange={onNodesChange}
         nodeTypes={nodeTypes}
         minZoom={0.1}
+        maxZoom={1}
         proOptions={{ hideAttribution: true }}
         deleteKeyCode={null}
-        fitView={false}
+        fitView
+        fitViewOptions={{ padding: 0.1, maxZoom: 1 }}
       >
         <Background variant={BackgroundVariant.Dots} gap={16} size={1} color="#d4d4d4" />
       </ReactFlow>
