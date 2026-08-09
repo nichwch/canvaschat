@@ -9,6 +9,7 @@ export type PromptFlowNode = Node<PromptNodeData, "prompt">;
 function PromptNode({ id, data, selected }: NodeProps<PromptFlowNode>) {
   const { updateNodeData, deleteElements, addNodes, getNode } = useReactFlow();
   const [draft, setDraft] = useState("");
+  const [tab, setTab] = useState<"chat" | "source">("chat");
   const chatEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -19,7 +20,13 @@ function PromptNode({ id, data, selected }: NodeProps<PromptFlowNode>) {
     const prompt = draft.trim();
     if (!prompt || data.loading) return;
 
-    const messages: ChatMessage[] = [...data.messages, { role: "user", content: prompt }];
+    // Sync manual source edits into history so the model builds on the html actually rendered.
+    const history = data.messages.map((m, i) =>
+      m.role === "assistant" && i === data.messages.length - 1 && data.html
+        ? { ...m, content: data.html }
+        : m
+    );
+    const messages: ChatMessage[] = [...history, { role: "user", content: prompt }];
     setDraft("");
     updateNodeData(id, { messages, loading: true, error: null });
 
@@ -95,6 +102,66 @@ function PromptNode({ id, data, selected }: NodeProps<PromptFlowNode>) {
       </div>
 
       <div className="flex min-h-0 flex-1">
+        <div className="flex w-[240px] flex-col border-r border-neutral-200">
+          <div className="flex gap-2 border-b border-neutral-200 p-2">
+            <button
+              className={`nodrag ${tab === "chat" ? "text-neutral-900" : "text-neutral-400 hover:text-neutral-900"}`}
+              onClick={() => setTab("chat")}
+            >
+              chat
+            </button>
+            <button
+              className={`nodrag ${tab === "source" ? "text-neutral-900" : "text-neutral-400 hover:text-neutral-900"}`}
+              onClick={() => setTab("source")}
+            >
+              source
+            </button>
+          </div>
+
+          {tab === "chat" ? (
+            <>
+              <div className="nowheel min-h-0 flex-1 overflow-y-auto p-2">
+                {data.messages.map((m, i) =>
+                  m.role === "user" ? (
+                    <p key={i} className="m-2">
+                      {m.content}
+                    </p>
+                  ) : (
+                    <p key={i} className="m-2 text-neutral-400">
+                      rendered
+                    </p>
+                  )
+                )}
+                {data.loading && <p className="m-2 text-neutral-400">generating…</p>}
+                {data.error && <p className="m-2 text-red-600">{data.error}</p>}
+                <div ref={chatEndRef} />
+              </div>
+              <div className="border-t border-neutral-200 p-2">
+                <textarea
+                  className="nodrag h-16 w-full resize-none outline-none placeholder:text-neutral-400"
+                  placeholder="describe the interface…"
+                  value={draft}
+                  onChange={(e) => setDraft(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && !e.shiftKey) {
+                      e.preventDefault();
+                      send();
+                    }
+                  }}
+                />
+              </div>
+            </>
+          ) : (
+            <textarea
+              className="nodrag nowheel min-h-0 flex-1 resize-none p-2 whitespace-pre outline-none placeholder:text-neutral-400"
+              placeholder="no source yet"
+              value={data.html ?? ""}
+              onChange={(e) => updateNodeData(id, { html: e.target.value })}
+              spellCheck={false}
+            />
+          )}
+        </div>
+
         <div className="min-w-0 flex-1">
           {data.html ? (
             <iframe
@@ -108,39 +175,6 @@ function PromptNode({ id, data, selected }: NodeProps<PromptFlowNode>) {
               {data.loading ? "generating…" : "nothing rendered yet"}
             </div>
           )}
-        </div>
-
-        <div className="flex w-[240px] flex-col border-l border-neutral-200">
-          <div className="nowheel min-h-0 flex-1 overflow-y-auto p-2">
-            {data.messages.map((m, i) =>
-              m.role === "user" ? (
-                <p key={i} className="m-2">
-                  {m.content}
-                </p>
-              ) : (
-                <p key={i} className="m-2 text-neutral-400">
-                  rendered
-                </p>
-              )
-            )}
-            {data.loading && <p className="m-2 text-neutral-400">generating…</p>}
-            {data.error && <p className="m-2 text-red-600">{data.error}</p>}
-            <div ref={chatEndRef} />
-          </div>
-          <div className="border-t border-neutral-200 p-2">
-            <textarea
-              className="nodrag h-16 w-full resize-none outline-none placeholder:text-neutral-400"
-              placeholder="describe the interface…"
-              value={draft}
-              onChange={(e) => setDraft(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && !e.shiftKey) {
-                  e.preventDefault();
-                  send();
-                }
-              }}
-            />
-          </div>
         </div>
       </div>
     </div>
