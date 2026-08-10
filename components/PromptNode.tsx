@@ -33,9 +33,7 @@ function PromptNode({ id, data, selected }: NodeProps<PromptFlowNode>) {
     const prompt = draft.trim();
     if (!prompt || data.loading) return;
 
-    // Keep the rendered source in context so the model modifies the current doc.
-    // Manual edits live on `data.html`; sync them into the last assistant turn when
-    // one exists, otherwise seed an assistant message so typed-in source is not dropped.
+    // Sync `data.html` into history so the model sees the document actually rendered.
     const history = data.messages.map((m, i) =>
       m.role === "assistant" && i === data.messages.length - 1 && data.html
         ? { ...m, content: data.html }
