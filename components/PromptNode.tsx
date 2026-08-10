@@ -33,13 +33,19 @@ function PromptNode({ id, data, selected }: NodeProps<PromptFlowNode>) {
     const prompt = draft.trim();
     if (!prompt || data.loading) return;
 
-    // Sync manual source edits into history so the model builds on the html actually rendered.
+    // Keep the rendered source in context so the model modifies the current doc.
+    // Manual edits live on `data.html`; sync them into the last assistant turn when
+    // one exists, otherwise seed an assistant message so typed-in source is not dropped.
     const history = data.messages.map((m, i) =>
       m.role === "assistant" && i === data.messages.length - 1 && data.html
         ? { ...m, content: data.html }
         : m
     );
-    const messages: ChatMessage[] = [...history, { role: "user", content: prompt }];
+    const seededHistory =
+      data.html && !history.some((m) => m.role === "assistant")
+        ? [{ role: "assistant" as const, content: data.html }, ...history]
+        : history;
+    const messages: ChatMessage[] = [...seededHistory, { role: "user", content: prompt }];
     setDraft("");
     updateNodeData(id, { messages, loading: true, error: null });
 

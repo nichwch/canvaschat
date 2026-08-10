@@ -10,6 +10,7 @@ const SYSTEM_PROMPT = [
   "You may use third-party libraries via script tags or ES module imports from jsdelivr/unpkg/esm.sh; always pin major versions.",
   "The document renders directly in a sandboxed iframe.",
   "Every reply fully replaces the previous document, so always output the entire document.",
+  "When prior assistant messages contain HTML, that is the current document — apply the user's request as a modification of it, preserving unchanged parts unless asked otherwise.",
   "Output raw HTML only. No markdown fences, no commentary.",
 ].join(" ");
 
