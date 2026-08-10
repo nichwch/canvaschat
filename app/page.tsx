@@ -2,8 +2,8 @@
 
 import dynamic from "next/dynamic";
 
-const Canvas = dynamic(() => import("@/components/Canvas"), { ssr: false });
+const CanvasList = dynamic(() => import("@/components/CanvasList"), { ssr: false });
 
 export default function Home() {
-  return <Canvas />;
+  return <CanvasList />;
 }

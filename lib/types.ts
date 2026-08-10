@@ -11,7 +11,27 @@ export type PromptNodeData = {
   error?: string | null;
 };
 
+export type StoredNode = {
+  id: string;
+  type: "prompt";
+  position: { x: number; y: number };
+  width?: number;
+  height?: number;
+  data: PromptNodeData;
+};
+
+export type CanvasMeta = {
+  id: string;
+  name: string;
+  createdAt: number;
+  updatedAt: number;
+};
+
 export const DEFAULT_MODEL = "anthropic/claude-fable-5";
 
+export const DEFAULT_NODE_WIDTH = 720;
+export const DEFAULT_NODE_HEIGHT = 440;
+export const MIN_NODE_WIDTH = 360;
+export const MIN_NODE_HEIGHT = 240;
+
 export const API_KEY_STORAGE_KEY = "proto:openrouter-key";
-export const CANVAS_STORAGE_KEY = "proto:canvas";

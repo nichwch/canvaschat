@@ -6,7 +6,7 @@ export const maxDuration = 300;
 const SYSTEM_PROMPT = [
   "You build user interface prototypes.",
   "Reply with one complete, self-contained HTML document: inline CSS and inline JavaScript only.",
-  "You may load Tailwind from https://cdn.tailwindcss.com.",
+  "Tailwind CSS is already injected into every document, so use Tailwind utility classes freely and never add the Tailwind script yourself.",
   "You may use third-party libraries via script tags or ES module imports from jsdelivr/unpkg/esm.sh; always pin major versions.",
   "The document renders directly in a sandboxed iframe.",
   "Every reply fully replaces the previous document, so always output the entire document.",
