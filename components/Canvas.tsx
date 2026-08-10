@@ -14,6 +14,7 @@ import {
 import "@xyflow/react/dist/style.css";
 import PromptNode, { type PromptFlowNode } from "./PromptNode";
 import { getCanvas, loadNodes, renameCanvas, saveNodes } from "@/lib/storage";
+import { downloadCanvasExport } from "@/lib/export";
 import {
   API_KEY_STORAGE_KEY,
   DEFAULT_MODEL,
@@ -53,10 +54,12 @@ function TopBar({
   canvasId,
   initialName,
   onAdd,
+  onExport,
 }: {
   canvasId: string;
   initialName: string;
   onAdd: () => void;
+  onExport: (name: string) => void;
 }) {
   const [key, setKey] = useState(() => localStorage.getItem(API_KEY_STORAGE_KEY) ?? "");
   const [name, setName] = useState(initialName);
@@ -85,6 +88,13 @@ function TopBar({
       />
       <button className="text-neutral-500 hover:text-neutral-900" onClick={onAdd}>
         new node
+      </button>
+      <button
+        className="text-neutral-500 hover:text-neutral-900"
+        onClick={() => onExport(name.trim() || "untitled")}
+        title="download as a standalone read-only html page"
+      >
+        export
       </button>
       <input
         className="w-64 outline-none placeholder:text-neutral-400"
@@ -117,6 +127,11 @@ function CanvasInner({ canvasId, name }: { canvasId: string; name: string }) {
     []
   );
 
+  const exportCanvas = useCallback(
+    (name: string) => downloadCanvasExport(name, toStoredNodes(nodes)),
+    [nodes]
+  );
+
   const addNode = useCallback(() => {
     const position = screenToFlowPosition({
       x: window.innerWidth / 2 - DEFAULT_NODE_WIDTH / 2 + Math.random() * 40,
@@ -138,7 +153,7 @@ function CanvasInner({ canvasId, name }: { canvasId: string; name: string }) {
 
   return (
     <div className="h-dvh w-dvw">
-      <TopBar canvasId={canvasId} initialName={name} onAdd={addNode} />
+      <TopBar canvasId={canvasId} initialName={name} onAdd={addNode} onExport={exportCanvas} />
       <ReactFlow
         nodes={nodes}
         onNodesChange={onNodesChange}
