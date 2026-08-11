@@ -12,6 +12,17 @@ import {
 import type { ExportLayout } from "@/lib/types";
 import { DownloadIcon } from "./icons";
 
+/** Minimal shape of the File System Access API bit we use; not in the default TS lib. */
+type SaveFilePicker = (options: {
+  suggestedName?: string;
+  types?: { description?: string; accept: Record<string, string[]> }[];
+}) => Promise<{
+  createWritable: () => Promise<{
+    write: (data: Blob) => Promise<void>;
+    close: () => Promise<void>;
+  }>;
+}>;
+
 const LAYOUTS: { value: ExportLayout; label: string; hint: string }[] = [
   { value: "stacked", label: "stacked document", hint: "nodes in reading order, full width" },
   { value: "canvas", label: "faithful canvas", hint: "exact positions, cropped to your nodes" },
@@ -40,6 +51,7 @@ export default function SettingsModal({
     canvasId ? getInstructions(canvasId) : ""
   );
   const [layout, setLayoutState] = useState<ExportLayout>(getExportLayout);
+  const [saveNote, setSaveNote] = useState<string | null>(null);
 
   const blocking = !onClose;
 
@@ -55,16 +67,44 @@ export default function SettingsModal({
     try {
       const { filename, html } = buildExport(layout);
       const blob = new Blob([html], { type: "text/html" });
-      return { filename, url: URL.createObjectURL(blob), size: blob.size, error: null };
+      return { filename, blob, url: URL.createObjectURL(blob), size: blob.size, error: null };
     } catch (err) {
       return {
         filename: "",
+        blob: null,
         url: "",
         size: 0,
         error: err instanceof Error ? err.message : "export failed",
       };
     }
   }, [buildExport, layout]);
+
+  /**
+   * Chrome and Edge can open a real save dialog, which reports its own failures
+   * instead of quietly doing nothing. Elsewhere the anchor's own download runs.
+   */
+  async function save(event: React.MouseEvent) {
+    const picker = (window as unknown as { showSaveFilePicker?: SaveFilePicker })
+      .showSaveFilePicker;
+    if (!picker || !download?.blob) return;
+
+    event.preventDefault();
+    setSaveNote(null);
+    try {
+      const handle = await picker({
+        suggestedName: download.filename,
+        types: [{ description: "HTML", accept: { "text/html": [".html"] } }],
+      });
+      const writable = await handle.createWritable();
+      await writable.write(download.blob);
+      await writable.close();
+      setSaveNote(`saved ${download.filename}`);
+    } catch (err) {
+      // Dismissing the dialog is a normal outcome, not a failure.
+      if (err instanceof DOMException && err.name === "AbortError") return;
+      setSaveNote(err instanceof Error ? `save failed: ${err.message}` : "save failed");
+    }
+  }
 
   function updateKey(value: string) {
     setKey(value);
@@ -160,6 +200,7 @@ export default function SettingsModal({
                     className="flex items-center gap-2 border border-neutral-300 px-2 py-1 text-neutral-500 hover:border-neutral-900 hover:text-neutral-900"
                     href={download.url}
                     download={download.filename}
+                    onClick={save}
                   >
                     <DownloadIcon />
                     download html
@@ -177,6 +218,11 @@ export default function SettingsModal({
                 <p className="mt-1 text-neutral-400">
                   {download.filename} · {formatSize(download.size)}
                 </p>
+                {saveNote && (
+                  <p className={saveNote.includes("failed") ? "text-red-600" : "text-neutral-500"}>
+                    {saveNote}
+                  </p>
+                )}
               </>
             )}
           </div>
