@@ -117,21 +117,6 @@ ${body}
 </html>`;
 }
 
-export function downloadHtml(filename: string, html: string) {
-  const url = URL.createObjectURL(new Blob([html], { type: "text/html" }));
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = filename;
-  document.body.appendChild(link);
-  link.click();
-  // Removing the anchor or revoking the url synchronously cancels the download
-  // in some browsers, so let the click settle first.
-  setTimeout(() => {
-    link.remove();
-    URL.revokeObjectURL(url);
-  }, 1000);
-}
-
 export function filenameFor(canvasName: string): string {
   const slug = canvasName.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
   return `${slug || "canvas"}.html`;

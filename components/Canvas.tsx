@@ -18,7 +18,7 @@ import SettingsModal from "./SettingsModal";
 import { CanvasIdProvider } from "./CanvasContext";
 import { ForkIcon, GearIcon } from "./icons";
 import { forkCanvas, getApiKey, getCanvas, loadNodes, renameCanvas, saveNodes } from "@/lib/storage";
-import { downloadHtml, exportCanvas, filenameFor } from "@/lib/export";
+import { exportCanvas, filenameFor } from "@/lib/export";
 import {
   DEFAULT_MODEL,
   DEFAULT_NODE_HEIGHT,
@@ -161,10 +161,13 @@ function CanvasInner({ canvasId, name }: { canvasId: string; name: string }) {
     ]);
   }, [screenToFlowPosition]);
 
-  const exportToFile = useCallback(
+  const buildExport = useCallback(
     (layout: ExportLayout) => {
       const currentName = getCanvas(canvasId)?.name ?? name;
-      downloadHtml(filenameFor(currentName), exportCanvas(toStoredNodes(nodes), currentName, layout));
+      return {
+        filename: filenameFor(currentName),
+        html: exportCanvas(toStoredNodes(nodes), currentName, layout),
+      };
     },
     [canvasId, name, nodes]
   );
@@ -196,7 +199,7 @@ function CanvasInner({ canvasId, name }: { canvasId: string; name: string }) {
         <SettingsModal
           canvasId={canvasId}
           onClose={hasKey ? () => setSettingsOpen(false) : undefined}
-          onExport={exportToFile}
+          buildExport={buildExport}
           onKeyChange={(key) => setHasKey(Boolean(key.trim()))}
         />
       )}

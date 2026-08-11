@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   getApiKey,
   getExportLayout,
@@ -17,17 +17,22 @@ const LAYOUTS: { value: ExportLayout; label: string; hint: string }[] = [
   { value: "canvas", label: "faithful canvas", hint: "exact positions, cropped to your nodes" },
 ];
 
+function formatSize(bytes: number): string {
+  return bytes < 1024 ? `${bytes} B` : `${Math.round(bytes / 1024)} KB`;
+}
+
 export default function SettingsModal({
   canvasId,
   onClose,
-  onExport,
+  buildExport,
   onKeyChange,
 }: {
   /** Omitted on the home page, where no single canvas is in scope. */
   canvasId?: string;
   /** Omitted when the modal is blocking on a missing api key. */
   onClose?: () => void;
-  onExport?: (layout: ExportLayout) => void;
+  /** Omitted on the home page. Returns the file to offer, it does not download it. */
+  buildExport?: (layout: ExportLayout) => { filename: string; html: string };
   onKeyChange?: (key: string) => void;
 }) {
   const [key, setKey] = useState(getApiKey);
@@ -35,9 +40,32 @@ export default function SettingsModal({
     canvasId ? getInstructions(canvasId) : ""
   );
   const [layout, setLayoutState] = useState<ExportLayout>(getExportLayout);
-  const [exportError, setExportError] = useState<string | null>(null);
 
   const blocking = !onClose;
+
+  // Built up front and handed to a real anchor: a link the user clicks themselves
+  // downloads far more reliably than a synthetic click on a generated element.
+  const download = useMemo(() => {
+    if (!buildExport) return null;
+    try {
+      const { filename, html } = buildExport(layout);
+      const blob = new Blob([html], { type: "text/html" });
+      return { filename, url: URL.createObjectURL(blob), size: blob.size, error: null };
+    } catch (err) {
+      return {
+        filename: "",
+        url: "",
+        size: 0,
+        error: err instanceof Error ? err.message : "export failed",
+      };
+    }
+  }, [buildExport, layout]);
+
+  useEffect(() => {
+    return () => {
+      if (download?.url) URL.revokeObjectURL(download.url);
+    };
+  }, [download]);
 
   function updateKey(value: string) {
     setKey(value);
@@ -54,15 +82,6 @@ export default function SettingsModal({
   function updateLayout(value: ExportLayout) {
     setLayoutState(value);
     setExportLayout(value);
-  }
-
-  function runExport() {
-    setExportError(null);
-    try {
-      onExport?.(layout);
-    } catch (err) {
-      setExportError(err instanceof Error ? err.message : "export failed");
-    }
   }
 
   return (
@@ -116,7 +135,7 @@ export default function SettingsModal({
           </div>
         )}
 
-        {onExport && (
+        {download && (
           <div className="p-3">
             <span className="mb-1 block text-neutral-500">export canvas as html</span>
             <div className="mb-2 flex flex-col gap-1">
@@ -133,15 +152,34 @@ export default function SettingsModal({
                 </label>
               ))}
             </div>
-            <button
-              type="button"
-              className="flex items-center gap-2 border border-neutral-300 px-2 py-1 text-neutral-500 hover:border-neutral-900 hover:text-neutral-900"
-              onClick={runExport}
-            >
-              <DownloadIcon />
-              download html
-            </button>
-            {exportError && <p className="mt-2 text-red-600">{exportError}</p>}
+            {download.error ? (
+              <p className="text-red-600">{download.error}</p>
+            ) : (
+              <>
+                <div className="flex items-center gap-3">
+                  <a
+                    className="flex items-center gap-2 border border-neutral-300 px-2 py-1 text-neutral-500 hover:border-neutral-900 hover:text-neutral-900"
+                    href={download.url}
+                    download={download.filename}
+                  >
+                    <DownloadIcon />
+                    download html
+                  </a>
+                  {/* Escape hatch if the browser suppresses the download outright. */}
+                  <a
+                    className="text-neutral-400 underline hover:text-neutral-900"
+                    href={download.url}
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    open in new tab
+                  </a>
+                </div>
+                <p className="mt-1 text-neutral-400">
+                  {download.filename} · {formatSize(download.size)}
+                </p>
+              </>
+            )}
           </div>
         )}
       </div>
