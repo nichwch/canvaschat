@@ -10,6 +10,7 @@ import {
   MIN_NODE_WIDTH,
   MIN_SIDEBAR_WIDTH,
   type ChatMessage,
+  type NodeTab,
   type PromptNodeData,
 } from "@/lib/types";
 import { getApiKey, getInstructions } from "@/lib/storage";
@@ -22,9 +23,7 @@ import CodeEditor from "./CodeEditor";
 
 export type PromptFlowNode = Node<PromptNodeData, "prompt">;
 
-type Tab = "chat" | "source" | "md";
-
-const TABS: Tab[] = ["chat", "source", "md"];
+const TABS: NodeTab[] = ["chat", "html", "md"];
 
 /** Leaves at least this much room for the preview when dragging the sidebar wider. */
 const MIN_PREVIEW_WIDTH = 120;
@@ -33,12 +32,13 @@ function PromptNode({ id, data, width, selected }: NodeProps<PromptFlowNode>) {
   const { updateNodeData, deleteElements, setNodes, getNode, getZoom } =
     useReactFlow<PromptFlowNode>();
   const [draft, setDraft] = useState("");
-  const [tab, setTab] = useState<Tab>("chat");
   const chatEndRef = useRef<HTMLDivElement>(null);
   const canvasId = useCanvasId();
 
   const sidebarWidth = data.sidebarWidth ?? DEFAULT_SIDEBAR_WIDTH;
   const collapsed = data.sidebarCollapsed ?? false;
+  // Persisted, so reopening a canvas restores each node to the view it was left on.
+  const tab = data.tab ?? "chat";
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ block: "nearest" });
@@ -208,7 +208,7 @@ function PromptNode({ id, data, width, selected }: NodeProps<PromptFlowNode>) {
                       className={`nodrag ${
                         tab === name ? "text-neutral-900" : "text-neutral-400 hover:text-neutral-900"
                       }`}
-                      onClick={() => setTab(name)}
+                      onClick={() => updateNodeData(id, { tab: name })}
                     >
                       {name}
                     </button>
@@ -250,7 +250,7 @@ function PromptNode({ id, data, width, selected }: NodeProps<PromptFlowNode>) {
                   </>
                 )}
 
-                {tab === "source" && (
+                {tab === "html" && (
                   <CodeEditor
                     language="html"
                     value={data.html ?? ""}

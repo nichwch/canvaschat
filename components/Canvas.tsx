@@ -51,6 +51,7 @@ function toStoredNodes(nodes: PromptFlowNode[]): StoredNode[] {
       messages: data.messages,
       html: data.html,
       markdown: data.markdown,
+      tab: data.tab,
       sidebarWidth: data.sidebarWidth,
       sidebarCollapsed: data.sidebarCollapsed,
     },

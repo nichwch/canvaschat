@@ -3,11 +3,15 @@ export type ChatMessage = {
   content: string;
 };
 
+/** Which editor a node's sidebar is showing, and so what its preview renders. */
+export type NodeTab = "chat" | "html" | "md";
+
 export type PromptNodeData = {
   model: string;
   messages: ChatMessage[];
   html: string | null;
   markdown?: string | null;
+  tab?: NodeTab;
   sidebarWidth?: number;
   sidebarCollapsed?: boolean;
   loading?: boolean;
