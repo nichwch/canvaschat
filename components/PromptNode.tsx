@@ -14,6 +14,7 @@ import {
 } from "@/lib/types";
 import { getApiKey, getInstructions } from "@/lib/storage";
 import { useCanvasId } from "./CanvasContext";
+import { useDebouncedValue } from "./useDebouncedValue";
 import { withTailwind } from "@/lib/preview";
 import { markdownDocument } from "@/lib/markdown";
 import { ForkIcon, SidebarIcon, TrashIcon } from "./icons";
@@ -43,13 +44,17 @@ function PromptNode({ id, data, width, selected }: NodeProps<PromptFlowNode>) {
     chatEndRef.current?.scrollIntoView({ block: "nearest" });
   }, [data.messages.length, data.loading]);
 
+  // Trailing values keep the iframe from reloading on every keystroke while editing.
+  const previewMarkdown = useDebouncedValue(data.markdown ?? "");
+  const previewHtml = useDebouncedValue(data.html ?? "");
+
   // The md tab previews the markdown; every other tab previews the generated document.
   const srcDoc = useMemo(() => {
     if (tab === "md" && !collapsed) {
-      return data.markdown?.trim() ? markdownDocument(data.markdown) : null;
+      return previewMarkdown.trim() ? markdownDocument(previewMarkdown) : null;
     }
-    return data.html ? withTailwind(data.html) : null;
-  }, [tab, collapsed, data.markdown, data.html]);
+    return previewHtml ? withTailwind(previewHtml) : null;
+  }, [tab, collapsed, previewMarkdown, previewHtml]);
 
   async function send() {
     const prompt = draft.trim();
