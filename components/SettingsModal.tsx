@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import {
   getApiKey,
   getExportLayout,
@@ -43,8 +43,13 @@ export default function SettingsModal({
 
   const blocking = !onClose;
 
-  // Built up front and handed to a real anchor: a link the user clicks themselves
-  // downloads far more reliably than a synthetic click on a generated element.
+  // Built up front and handed to a real anchor.
+  //
+  // These urls are deliberately never revoked. Anything that revokes while the
+  // anchor still points at the url — an effect cleanup, a strict-mode remount —
+  // leaves a dead href, which the browser reports as a failed download. The only
+  // provably safe release point is document unload, which the browser already
+  // does for us; the cost is a few unreferenced blobs per session.
   const download = useMemo(() => {
     if (!buildExport) return null;
     try {
@@ -60,12 +65,6 @@ export default function SettingsModal({
       };
     }
   }, [buildExport, layout]);
-
-  useEffect(() => {
-    return () => {
-      if (download?.url) URL.revokeObjectURL(download.url);
-    };
-  }, [download]);
 
   function updateKey(value: string) {
     setKey(value);
