@@ -18,19 +18,24 @@ const LAYOUTS: { value: ExportLayout; label: string; hint: string }[] = [
 ];
 
 export default function SettingsModal({
+  canvasId,
   onClose,
   onExport,
   onKeyChange,
 }: {
+  /** Omitted on the home page, where no single canvas is in scope. */
+  canvasId?: string;
   /** Omitted when the modal is blocking on a missing api key. */
   onClose?: () => void;
-  /** Omitted on the home page, where no single canvas is in scope. */
   onExport?: (layout: ExportLayout) => void;
   onKeyChange?: (key: string) => void;
 }) {
   const [key, setKey] = useState(getApiKey);
-  const [instructions, setInstructionsState] = useState(getInstructions);
+  const [instructions, setInstructionsState] = useState(() =>
+    canvasId ? getInstructions(canvasId) : ""
+  );
   const [layout, setLayoutState] = useState<ExportLayout>(getExportLayout);
+  const [exportError, setExportError] = useState<string | null>(null);
 
   const blocking = !onClose;
 
@@ -41,13 +46,23 @@ export default function SettingsModal({
   }
 
   function updateInstructions(value: string) {
+    if (!canvasId) return;
     setInstructionsState(value);
-    setInstructions(value);
+    setInstructions(canvasId, value);
   }
 
   function updateLayout(value: ExportLayout) {
     setLayoutState(value);
     setExportLayout(value);
+  }
+
+  function runExport() {
+    setExportError(null);
+    try {
+      onExport?.(layout);
+    } catch (err) {
+      setExportError(err instanceof Error ? err.message : "export failed");
+    }
   }
 
   return (
@@ -83,19 +98,23 @@ export default function SettingsModal({
           )}
         </div>
 
-        <div className="border-b border-neutral-200 p-3">
-          <label className="mb-1 block text-neutral-500" htmlFor="settings-instructions">
-            instructions for all nodes
-          </label>
-          <textarea
-            id="settings-instructions"
-            className="h-28 w-full resize-none border border-neutral-300 p-2 outline-none placeholder:text-neutral-400 focus:border-neutral-900"
-            placeholder="e.g. always use a dark theme, prefer system fonts, no rounded corners…"
-            value={instructions}
-            onChange={(e) => updateInstructions(e.target.value)}
-          />
-          <p className="mt-1 text-neutral-400">applied to every generation on every canvas.</p>
-        </div>
+        {canvasId && (
+          <div className="border-b border-neutral-200 p-3">
+            <label className="mb-1 block text-neutral-500" htmlFor="settings-instructions">
+              instructions for all nodes
+            </label>
+            <textarea
+              id="settings-instructions"
+              className="h-28 w-full resize-none border border-neutral-300 p-2 outline-none placeholder:text-neutral-400 focus:border-neutral-900"
+              placeholder="e.g. always use a dark theme, prefer system fonts, no rounded corners…"
+              value={instructions}
+              onChange={(e) => updateInstructions(e.target.value)}
+            />
+            <p className="mt-1 text-neutral-400">
+              applied to every generation on this canvas.
+            </p>
+          </div>
+        )}
 
         {onExport && (
           <div className="p-3">
@@ -115,12 +134,14 @@ export default function SettingsModal({
               ))}
             </div>
             <button
+              type="button"
               className="flex items-center gap-2 border border-neutral-300 px-2 py-1 text-neutral-500 hover:border-neutral-900 hover:text-neutral-900"
-              onClick={() => onExport(layout)}
+              onClick={runExport}
             >
               <DownloadIcon />
               download html
             </button>
+            {exportError && <p className="mt-2 text-red-600">{exportError}</p>}
           </div>
         )}
       </div>

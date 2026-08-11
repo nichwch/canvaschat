@@ -15,6 +15,7 @@ import {
 import "@xyflow/react/dist/style.css";
 import PromptNode, { type PromptFlowNode } from "./PromptNode";
 import SettingsModal from "./SettingsModal";
+import { CanvasIdProvider } from "./CanvasContext";
 import { ForkIcon, GearIcon } from "./icons";
 import { forkCanvas, getApiKey, getCanvas, loadNodes, renameCanvas, saveNodes } from "@/lib/storage";
 import { downloadHtml, exportCanvas, filenameFor } from "@/lib/export";
@@ -193,6 +194,7 @@ function CanvasInner({ canvasId, name }: { canvasId: string; name: string }) {
       {/* Without a key nothing on the canvas can work, so the modal blocks until one is entered. */}
       {(!hasKey || settingsOpen) && (
         <SettingsModal
+          canvasId={canvasId}
           onClose={hasKey ? () => setSettingsOpen(false) : undefined}
           onExport={exportToFile}
           onKeyChange={(key) => setHasKey(Boolean(key.trim()))}
@@ -217,8 +219,10 @@ export default function Canvas({ canvasId }: { canvasId: string }) {
   }
 
   return (
-    <ReactFlowProvider>
-      <CanvasInner canvasId={canvasId} name={meta.name} />
-    </ReactFlowProvider>
+    <CanvasIdProvider value={canvasId}>
+      <ReactFlowProvider>
+        <CanvasInner canvasId={canvasId} name={meta.name} />
+      </ReactFlowProvider>
+    </CanvasIdProvider>
   );
 }

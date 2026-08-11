@@ -11,6 +11,7 @@ const INDEX_KEY = "proto:canvases";
 const LEGACY_NODES_KEY = "proto:canvas";
 
 const nodesKey = (canvasId: string) => `proto:canvas:${canvasId}:nodes`;
+const instructionsKey = (canvasId: string) => `proto:canvas:${canvasId}:instructions`;
 
 function read<T>(key: string, fallback: T): T {
   try {
@@ -33,9 +34,23 @@ function migrateLegacyCanvas() {
   localStorage.removeItem(LEGACY_NODES_KEY);
 }
 
+/** Instructions used to be one global setting; hand them to every canvas that existed then. */
+function migrateGlobalInstructions(canvases: CanvasMeta[]) {
+  const legacy = localStorage.getItem(INSTRUCTIONS_STORAGE_KEY);
+  if (legacy === null) return;
+  for (const canvas of canvases) {
+    if (localStorage.getItem(instructionsKey(canvas.id)) === null) {
+      localStorage.setItem(instructionsKey(canvas.id), legacy);
+    }
+  }
+  localStorage.removeItem(INSTRUCTIONS_STORAGE_KEY);
+}
+
 export function listCanvases(): CanvasMeta[] {
   migrateLegacyCanvas();
-  return read<CanvasMeta[]>(INDEX_KEY, []).sort((a, b) => b.updatedAt - a.updatedAt);
+  const canvases = read<CanvasMeta[]>(INDEX_KEY, []);
+  migrateGlobalInstructions(canvases);
+  return canvases.sort((a, b) => b.updatedAt - a.updatedAt);
 }
 
 export function getCanvas(id: string): CanvasMeta | null {
@@ -59,6 +74,7 @@ export function renameCanvas(id: string, name: string) {
 
 export function deleteCanvas(id: string) {
   localStorage.removeItem(nodesKey(id));
+  localStorage.removeItem(instructionsKey(id));
   writeIndex(listCanvases().filter((c) => c.id !== id));
 }
 
@@ -76,6 +92,7 @@ export function forkCanvas(id: string): CanvasMeta | null {
   };
   const nodes = loadNodes(id).map((n) => ({ ...n, id: crypto.randomUUID() }));
   localStorage.setItem(nodesKey(meta.id), JSON.stringify(nodes));
+  localStorage.setItem(instructionsKey(meta.id), getInstructions(id));
   writeIndex([meta, ...listCanvases()]);
   return meta;
 }
@@ -89,7 +106,7 @@ export function saveNodes(canvasId: string, nodes: StoredNode[]) {
   writeIndex(listCanvases().map((c) => (c.id === canvasId ? { ...c, updatedAt: Date.now() } : c)));
 }
 
-/* Settings shared across every canvas. */
+/* Settings. The api key and export layout are global; instructions are per canvas. */
 
 export function getApiKey(): string {
   return localStorage.getItem(API_KEY_STORAGE_KEY) ?? "";
@@ -99,12 +116,12 @@ export function setApiKey(key: string) {
   localStorage.setItem(API_KEY_STORAGE_KEY, key);
 }
 
-export function getInstructions(): string {
-  return localStorage.getItem(INSTRUCTIONS_STORAGE_KEY) ?? "";
+export function getInstructions(canvasId: string): string {
+  return localStorage.getItem(instructionsKey(canvasId)) ?? "";
 }
 
-export function setInstructions(instructions: string) {
-  localStorage.setItem(INSTRUCTIONS_STORAGE_KEY, instructions);
+export function setInstructions(canvasId: string, instructions: string) {
+  localStorage.setItem(instructionsKey(canvasId), instructions);
 }
 
 export function getExportLayout(): ExportLayout {

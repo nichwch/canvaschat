@@ -13,6 +13,7 @@ import {
   type PromptNodeData,
 } from "@/lib/types";
 import { getApiKey, getInstructions } from "@/lib/storage";
+import { useCanvasId } from "./CanvasContext";
 import { withTailwind } from "@/lib/preview";
 import { markdownDocument } from "@/lib/markdown";
 import { ForkIcon, SidebarIcon, TrashIcon } from "./icons";
@@ -33,6 +34,7 @@ function PromptNode({ id, data, width, selected }: NodeProps<PromptFlowNode>) {
   const [draft, setDraft] = useState("");
   const [tab, setTab] = useState<Tab>("chat");
   const chatEndRef = useRef<HTMLDivElement>(null);
+  const canvasId = useCanvasId();
 
   const sidebarWidth = data.sidebarWidth ?? DEFAULT_SIDEBAR_WIDTH;
   const collapsed = data.sidebarCollapsed ?? false;
@@ -73,7 +75,7 @@ function PromptNode({ id, data, width, selected }: NodeProps<PromptFlowNode>) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           apiKey: getApiKey(),
-          instructions: getInstructions(),
+          instructions: getInstructions(canvasId),
           model: data.model,
           messages,
         }),

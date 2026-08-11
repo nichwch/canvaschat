@@ -124,9 +124,12 @@ export function downloadHtml(filename: string, html: string) {
   link.download = filename;
   document.body.appendChild(link);
   link.click();
-  link.remove();
-  // Revoking synchronously cancels the download in some browsers.
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  // Removing the anchor or revoking the url synchronously cancels the download
+  // in some browsers, so let the click settle first.
+  setTimeout(() => {
+    link.remove();
+    URL.revokeObjectURL(url);
+  }, 1000);
 }
 
 export function filenameFor(canvasName: string): string {
