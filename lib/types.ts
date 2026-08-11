@@ -27,7 +27,7 @@ export type CanvasMeta = {
   updatedAt: number;
 };
 
-export const DEFAULT_MODEL = "anthropic/claude-fable-5";
+export const DEFAULT_MODEL = "moonshotai/kimi-k3";
 
 export const DEFAULT_NODE_WIDTH = 720;
 export const DEFAULT_NODE_HEIGHT = 440;
