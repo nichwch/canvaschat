@@ -14,3 +14,12 @@ body {
   background: #fafafa;
   color: #171717;
 }
+
+/* React Flow marks the pane grabbable at rest; only show the hand while actually panning. */
+.react-flow__pane.draggable {
+  cursor: default;
+}
+
+.react-flow__pane.dragging {
+  cursor: grabbing;
+}

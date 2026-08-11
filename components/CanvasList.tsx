@@ -3,9 +3,10 @@
 import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { createCanvas, deleteCanvas, listCanvases, loadNodes } from "@/lib/storage";
+import { createCanvas, deleteCanvas, forkCanvas, listCanvases, loadNodes } from "@/lib/storage";
 import type { CanvasMeta } from "@/lib/types";
-import { TrashIcon } from "./icons";
+import SettingsModal from "./SettingsModal";
+import { ForkIcon, GearIcon, TrashIcon } from "./icons";
 
 type Entry = CanvasMeta & { nodeCount: number };
 
@@ -24,11 +25,16 @@ function formatDate(ms: number) {
 export default function CanvasList() {
   // Client-only component (loaded with ssr: false), so localStorage is safe to read up front.
   const [canvases, setCanvases] = useState<Entry[]>(read);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const router = useRouter();
 
   function create() {
     const meta = createCanvas();
     router.push(`/canvas/${meta.id}`);
+  }
+
+  function fork(id: string) {
+    if (forkCanvas(id)) setCanvases(read());
   }
 
   function remove(id: string, name: string) {
@@ -42,6 +48,14 @@ export default function CanvasList() {
       <div className="mb-6 flex items-center gap-3">
         <span>proto</span>
         <span className="flex-1" />
+        <button
+          className="text-neutral-500 hover:text-neutral-900"
+          onClick={() => setSettingsOpen(true)}
+          title="settings"
+          aria-label="settings"
+        >
+          <GearIcon />
+        </button>
         <button
           className="border border-neutral-300 bg-white px-2 py-1 text-neutral-500 hover:text-neutral-900"
           onClick={create}
@@ -65,18 +79,30 @@ export default function CanvasList() {
                   {c.nodeCount} {c.nodeCount === 1 ? "node" : "nodes"} · {formatDate(c.updatedAt)}
                 </div>
               </Link>
-              <button
-                className="absolute top-2 right-2 hidden text-neutral-400 group-hover:block hover:text-red-600"
-                onClick={() => remove(c.id, c.name)}
-                title="delete canvas"
-                aria-label="delete canvas"
-              >
-                <TrashIcon />
-              </button>
+              <div className="absolute top-2 right-2 hidden gap-2 group-hover:flex">
+                <button
+                  className="text-neutral-400 hover:text-neutral-900"
+                  onClick={() => fork(c.id)}
+                  title="fork canvas"
+                  aria-label="fork canvas"
+                >
+                  <ForkIcon />
+                </button>
+                <button
+                  className="text-neutral-400 hover:text-red-600"
+                  onClick={() => remove(c.id, c.name)}
+                  title="delete canvas"
+                  aria-label="delete canvas"
+                >
+                  <TrashIcon />
+                </button>
+              </div>
             </div>
           ))}
         </div>
       )}
+
+      {settingsOpen && <SettingsModal onClose={() => setSettingsOpen(false)} />}
     </div>
   );
 }

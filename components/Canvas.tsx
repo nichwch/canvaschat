@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import {
   Background,
   BackgroundVariant,
@@ -13,12 +14,15 @@ import {
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import PromptNode, { type PromptFlowNode } from "./PromptNode";
-import { getCanvas, loadNodes, renameCanvas, saveNodes } from "@/lib/storage";
+import SettingsModal from "./SettingsModal";
+import { ForkIcon, GearIcon } from "./icons";
+import { forkCanvas, getApiKey, getCanvas, loadNodes, renameCanvas, saveNodes } from "@/lib/storage";
+import { downloadHtml, exportCanvas, filenameFor } from "@/lib/export";
 import {
-  API_KEY_STORAGE_KEY,
   DEFAULT_MODEL,
   DEFAULT_NODE_HEIGHT,
   DEFAULT_NODE_WIDTH,
+  type ExportLayout,
   type PromptNodeData,
   type StoredNode,
 } from "@/lib/types";
@@ -41,38 +45,47 @@ function toStoredNodes(nodes: PromptFlowNode[]): StoredNode[] {
     position,
     width,
     height,
-    data: { model: data.model, messages: data.messages, html: data.html },
+    data: {
+      model: data.model,
+      messages: data.messages,
+      html: data.html,
+      markdown: data.markdown,
+      sidebarWidth: data.sidebarWidth,
+      sidebarCollapsed: data.sidebarCollapsed,
+    },
   }));
 }
 
 function newNodeData(): PromptNodeData {
-  return { model: DEFAULT_MODEL, messages: [], html: null, loading: false, error: null };
+  return { model: DEFAULT_MODEL, messages: [], html: null, markdown: null, loading: false, error: null };
 }
 
 function TopBar({
   canvasId,
   initialName,
   onAdd,
+  onOpenSettings,
 }: {
   canvasId: string;
   initialName: string;
   onAdd: () => void;
+  onOpenSettings: () => void;
 }) {
-  const [key, setKey] = useState(() => localStorage.getItem(API_KEY_STORAGE_KEY) ?? "");
   const [name, setName] = useState(initialName);
-
-  function updateKey(value: string) {
-    setKey(value);
-    localStorage.setItem(API_KEY_STORAGE_KEY, value);
-  }
+  const router = useRouter();
 
   function updateName(value: string) {
     setName(value);
     renameCanvas(canvasId, value.trim() || "untitled");
   }
 
+  function fork() {
+    const meta = forkCanvas(canvasId);
+    if (meta) router.push(`/canvas/${meta.id}`);
+  }
+
   return (
-    <div className="absolute top-2 left-2 z-10 flex items-center gap-2 border border-neutral-300 bg-white p-2">
+    <div className="absolute top-2 left-2 z-10 flex items-center gap-3 border border-neutral-300 bg-white p-2">
       <Link className="text-neutral-500 hover:text-neutral-900" href="/">
         ← canvases
       </Link>
@@ -86,19 +99,30 @@ function TopBar({
       <button className="text-neutral-500 hover:text-neutral-900" onClick={onAdd}>
         new node
       </button>
-      <input
-        className="w-64 outline-none placeholder:text-neutral-400"
-        type="password"
-        placeholder="openrouter api key"
-        value={key}
-        onChange={(e) => updateKey(e.target.value)}
-      />
+      <button
+        className="text-neutral-500 hover:text-neutral-900"
+        onClick={fork}
+        title="fork canvas"
+        aria-label="fork canvas"
+      >
+        <ForkIcon />
+      </button>
+      <button
+        className="text-neutral-500 hover:text-neutral-900"
+        onClick={onOpenSettings}
+        title="settings"
+        aria-label="settings"
+      >
+        <GearIcon />
+      </button>
     </div>
   );
 }
 
 function CanvasInner({ canvasId, name }: { canvasId: string; name: string }) {
   const [nodes, setNodes] = useState<PromptFlowNode[]>(() => toFlowNodes(loadNodes(canvasId)));
+  const [hasKey, setHasKey] = useState(() => Boolean(getApiKey()));
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const { screenToFlowPosition } = useReactFlow();
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -136,9 +160,22 @@ function CanvasInner({ canvasId, name }: { canvasId: string; name: string }) {
     ]);
   }, [screenToFlowPosition]);
 
+  const exportToFile = useCallback(
+    (layout: ExportLayout) => {
+      const currentName = getCanvas(canvasId)?.name ?? name;
+      downloadHtml(filenameFor(currentName), exportCanvas(toStoredNodes(nodes), currentName, layout));
+    },
+    [canvasId, name, nodes]
+  );
+
   return (
-    <div className="h-dvh w-dvw">
-      <TopBar canvasId={canvasId} initialName={name} onAdd={addNode} />
+    <div className="relative h-dvh w-dvw">
+      <TopBar
+        canvasId={canvasId}
+        initialName={name}
+        onAdd={addNode}
+        onOpenSettings={() => setSettingsOpen(true)}
+      />
       <ReactFlow
         nodes={nodes}
         onNodesChange={onNodesChange}
@@ -152,6 +189,15 @@ function CanvasInner({ canvasId, name }: { canvasId: string; name: string }) {
       >
         <Background variant={BackgroundVariant.Dots} gap={16} size={1} color="#d4d4d4" />
       </ReactFlow>
+
+      {/* Without a key nothing on the canvas can work, so the modal blocks until one is entered. */}
+      {(!hasKey || settingsOpen) && (
+        <SettingsModal
+          onClose={hasKey ? () => setSettingsOpen(false) : undefined}
+          onExport={exportToFile}
+          onKeyChange={(key) => setHasKey(Boolean(key.trim()))}
+        />
+      )}
     </div>
   );
 }

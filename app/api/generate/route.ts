@@ -20,10 +20,11 @@ function stripFences(text: string): string {
 }
 
 export async function POST(req: NextRequest) {
-  const { apiKey, model, messages } = (await req.json()) as {
+  const { apiKey, model, messages, instructions } = (await req.json()) as {
     apiKey?: string;
     model?: string;
     messages?: ChatMessage[];
+    instructions?: string;
   };
 
   if (!apiKey) {
@@ -33,6 +34,11 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "missing model or messages" }, { status: 400 });
   }
 
+  // User instructions from settings apply to every node, on top of the base prompt.
+  const system = instructions?.trim()
+    ? `${SYSTEM_PROMPT}\n\nThe user's standing instructions for every prototype:\n${instructions.trim()}`
+    : SYSTEM_PROMPT;
+
   const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
     method: "POST",
     headers: {
@@ -41,7 +47,7 @@ export async function POST(req: NextRequest) {
     },
     body: JSON.stringify({
       model,
-      messages: [{ role: "system", content: SYSTEM_PROMPT }, ...messages],
+      messages: [{ role: "system", content: system }, ...messages],
     }),
   });
 
