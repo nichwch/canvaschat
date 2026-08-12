@@ -95,7 +95,7 @@ function TopBar({
   }
 
   return (
-    <div className="absolute top-2 left-2 z-10 flex items-center gap-3 border border-neutral-300 bg-white p-2">
+    <div className="absolute top-[15px] left-[15px] z-10 flex items-center gap-3 border border-neutral-300 bg-white p-2">
       <Link className="text-neutral-500 hover:text-neutral-900" href="/">
         ← canvases
       </Link>
@@ -206,7 +206,7 @@ function CanvasInner({ canvasId, name }: { canvasId: string; name: string }) {
           position="bottom-left"
           pannable
           zoomable
-          className="!m-2 !border !border-neutral-300 !bg-white"
+          className="!border !border-neutral-300 !bg-white"
           nodeColor="#e5e5e5"
           nodeStrokeColor="#a3a3a3"
           maskColor="rgba(250, 250, 250, 0.7)"
