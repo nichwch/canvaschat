@@ -14,6 +14,7 @@ export type PromptNodeData = {
   tab?: NodeTab;
   sidebarWidth?: number;
   sidebarCollapsed?: boolean;
+  chatInputHeight?: number;
   loading?: boolean;
   error?: string | null;
 };
@@ -46,6 +47,9 @@ export const MIN_NODE_HEIGHT = 240;
 
 export const DEFAULT_SIDEBAR_WIDTH = 240;
 export const MIN_SIDEBAR_WIDTH = 160;
+
+export const DEFAULT_CHAT_INPUT_HEIGHT = 80;
+export const MIN_CHAT_INPUT_HEIGHT = 48;
 
 export const API_KEY_STORAGE_KEY = "proto:openrouter-key";
 export const INSTRUCTIONS_STORAGE_KEY = "proto:instructions";

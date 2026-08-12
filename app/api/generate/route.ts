@@ -39,17 +39,28 @@ export async function POST(req: NextRequest) {
     ? `${SYSTEM_PROMPT}\n\nThe user's standing instructions for every prototype:\n${instructions.trim()}`
     : SYSTEM_PROMPT;
 
-  const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      model,
-      messages: [{ role: "system", content: system }, ...messages],
-    }),
-  });
+  let res: Response;
+  try {
+    res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      // A stalled upstream request would otherwise hold the route open until maxDuration.
+      signal: AbortSignal.timeout(210_000),
+      body: JSON.stringify({
+        model,
+        messages: [{ role: "system", content: system }, ...messages],
+      }),
+    });
+  } catch (err) {
+    const timedOut = err instanceof DOMException && err.name === "TimeoutError";
+    return NextResponse.json(
+      { error: timedOut ? "openrouter timed out" : "could not reach openrouter" },
+      { status: 504 }
+    );
+  }
 
   if (!res.ok) {
     const body = await res.text();

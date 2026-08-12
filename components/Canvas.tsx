@@ -54,6 +54,7 @@ function toStoredNodes(nodes: PromptFlowNode[]): StoredNode[] {
       tab: data.tab,
       sidebarWidth: data.sidebarWidth,
       sidebarCollapsed: data.sidebarCollapsed,
+      chatInputHeight: data.chatInputHeight,
     },
   }));
 }

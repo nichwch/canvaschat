@@ -3,9 +3,11 @@
 import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { NodeResizer, useReactFlow, type Node, type NodeProps } from "@xyflow/react";
 import {
+  DEFAULT_CHAT_INPUT_HEIGHT,
   DEFAULT_NODE_HEIGHT,
   DEFAULT_NODE_WIDTH,
   DEFAULT_SIDEBAR_WIDTH,
+  MIN_CHAT_INPUT_HEIGHT,
   MIN_NODE_HEIGHT,
   MIN_NODE_WIDTH,
   MIN_SIDEBAR_WIDTH,
@@ -13,6 +15,7 @@ import {
   type NodeTab,
   type PromptNodeData,
 } from "@/lib/types";
+import { CUSTOM_MODEL, MODEL_GROUPS, isKnownModel } from "@/lib/models";
 import { getApiKey, getInstructions } from "@/lib/storage";
 import { useCanvasId } from "./CanvasContext";
 import { useDebouncedValue } from "./useDebouncedValue";
@@ -28,14 +31,32 @@ const TABS: NodeTab[] = ["chat", "html", "md"];
 /** Leaves at least this much room for the preview when dragging the sidebar wider. */
 const MIN_PREVIEW_WIDTH = 120;
 
-function PromptNode({ id, data, width, selected }: NodeProps<PromptFlowNode>) {
+/** Header plus tab bar, subtracted when working out how tall the chat input may grow. */
+const SIDEBAR_CHROME_HEIGHT = 76;
+/** Leaves at least this much room for the transcript when dragging the input taller. */
+const MIN_CHAT_LOG_HEIGHT = 72;
+
+/** Runs `onMove` for the duration of a pointer drag, then unhooks itself. */
+function trackPointerDrag(onMove: (event: PointerEvent) => void) {
+  const stop = () => {
+    window.removeEventListener("pointermove", onMove);
+    window.removeEventListener("pointerup", stop);
+  };
+  window.addEventListener("pointermove", onMove);
+  window.addEventListener("pointerup", stop);
+}
+
+function PromptNode({ id, data, width, height, selected }: NodeProps<PromptFlowNode>) {
   const { updateNodeData, deleteElements, setNodes, getNode, getZoom } =
     useReactFlow<PromptFlowNode>();
   const [draft, setDraft] = useState("");
+  // A model saved before it was in the list — or typed by hand — opens in custom mode.
+  const [customModel, setCustomModel] = useState(() => !isKnownModel(data.model));
   const chatEndRef = useRef<HTMLDivElement>(null);
   const canvasId = useCanvasId();
 
   const sidebarWidth = data.sidebarWidth ?? DEFAULT_SIDEBAR_WIDTH;
+  const chatInputHeight = data.chatInputHeight ?? DEFAULT_CHAT_INPUT_HEIGHT;
   const collapsed = data.sidebarCollapsed ?? false;
   // Persisted, so reopening a canvas restores each node to the view it was left on.
   const tab = data.tab ?? "chat";
@@ -48,26 +69,32 @@ function PromptNode({ id, data, width, selected }: NodeProps<PromptFlowNode>) {
   const previewMarkdown = useDebouncedValue(data.markdown ?? "");
   const previewHtml = useDebouncedValue(data.html ?? "");
 
-  // The md tab previews the markdown; every other tab previews the generated document.
+  // The md tab previews the markdown; every other tab previews the generated
+  // document. Hiding the sidebar keeps whichever tab was last selected, so the
+  // preview does not change out from under you.
   const srcDoc = useMemo(() => {
-    if (tab === "md" && !collapsed) {
+    if (tab === "md") {
       return previewMarkdown.trim() ? markdownDocument(previewMarkdown) : null;
     }
     return previewHtml ? withTailwind(previewHtml) : null;
-  }, [tab, collapsed, previewMarkdown, previewHtml]);
+  }, [tab, previewMarkdown, previewHtml]);
 
   async function send() {
     const prompt = draft.trim();
     if (!prompt || data.loading) return;
 
-    // Sync `data.html` into history so the model sees the document actually rendered.
-    const history = data.messages.map((m, i) =>
-      m.role === "assistant" && i === data.messages.length - 1 && data.html
-        ? { ...m, content: data.html }
-        : m
-    );
+    // Every assistant turn stores a full HTML document, so sending the raw
+    // history balloons the prompt by a whole document per turn. Only the
+    // latest render matters — send `data.html` (the document actually
+    // rendered, edits included) there and a stub everywhere else.
+    const lastAssistant = data.messages.findLastIndex((m) => m.role === "assistant");
+    const history = data.messages.map((m, i) => {
+      if (m.role !== "assistant") return m;
+      if (i === lastAssistant) return data.html ? { ...m, content: data.html } : m;
+      return { ...m, content: "(an earlier version of the document, since replaced)" };
+    });
     const seededHistory =
-      data.html && !history.some((m) => m.role === "assistant")
+      data.html && lastAssistant === -1
         ? [{ role: "assistant" as const, content: data.html }, ...history]
         : history;
     const messages: ChatMessage[] = [...seededHistory, { role: "user", content: prompt }];
@@ -78,6 +105,8 @@ function PromptNode({ id, data, width, selected }: NodeProps<PromptFlowNode>) {
       const res = await fetch("/api/generate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        // Give up instead of leaving the node stuck on "generating…" forever.
+        signal: AbortSignal.timeout(240_000),
         body: JSON.stringify({
           apiKey: getApiKey(),
           instructions: getInstructions(canvasId),
@@ -96,7 +125,12 @@ function PromptNode({ id, data, width, selected }: NodeProps<PromptFlowNode>) {
     } catch (err) {
       updateNodeData(id, {
         loading: false,
-        error: err instanceof Error ? err.message : "request failed",
+        error:
+          err instanceof DOMException && err.name === "TimeoutError"
+            ? "timed out after 4 minutes"
+            : err instanceof Error
+              ? err.message
+              : "request failed",
       });
     }
   }
@@ -131,18 +165,32 @@ function PromptNode({ id, data, width, selected }: NodeProps<PromptFlowNode>) {
     const zoom = getZoom();
     const maxWidth = (width ?? DEFAULT_NODE_WIDTH) - MIN_PREVIEW_WIDTH;
 
-    const onMove = (moveEvent: PointerEvent) => {
+    trackPointerDrag((moveEvent) => {
       const next = startWidth + (moveEvent.clientX - startX) / zoom;
       updateNodeData(id, {
         sidebarWidth: Math.round(Math.min(Math.max(next, MIN_SIDEBAR_WIDTH), maxWidth)),
       });
-    };
-    const stop = () => {
-      window.removeEventListener("pointermove", onMove);
-      window.removeEventListener("pointerup", stop);
-    };
-    window.addEventListener("pointermove", onMove);
-    window.addEventListener("pointerup", stop);
+    });
+  }
+
+  function startChatInputResize(event: React.PointerEvent) {
+    event.preventDefault();
+    event.stopPropagation();
+    const startY = event.clientY;
+    const startHeight = chatInputHeight;
+    const zoom = getZoom();
+    const maxHeight =
+      (height ?? DEFAULT_NODE_HEIGHT) - SIDEBAR_CHROME_HEIGHT - MIN_CHAT_LOG_HEIGHT;
+
+    trackPointerDrag((moveEvent) => {
+      // The handle sits above the input, so dragging up grows it.
+      const next = startHeight - (moveEvent.clientY - startY) / zoom;
+      updateNodeData(id, {
+        chatInputHeight: Math.round(
+          Math.min(Math.max(next, MIN_CHAT_INPUT_HEIGHT), Math.max(maxHeight, MIN_CHAT_INPUT_HEIGHT))
+        ),
+      });
+    });
   }
 
   return (
@@ -168,13 +216,40 @@ function PromptNode({ id, data, width, selected }: NodeProps<PromptFlowNode>) {
           >
             <SidebarIcon collapsed={collapsed} />
           </button>
-          <input
-            className="nodrag w-56 cursor-text text-neutral-500 outline-none"
-            value={data.model}
-            onChange={(e) => updateNodeData(id, { model: e.target.value })}
-            spellCheck={false}
+          <select
+            className="nodrag cursor-pointer bg-white text-neutral-500 outline-none hover:text-neutral-900"
+            value={customModel ? CUSTOM_MODEL : data.model}
+            onChange={(e) => {
+              if (e.target.value === CUSTOM_MODEL) {
+                setCustomModel(true);
+                return;
+              }
+              setCustomModel(false);
+              updateNodeData(id, { model: e.target.value });
+            }}
             title="openrouter model"
-          />
+          >
+            {MODEL_GROUPS.map((group) => (
+              <optgroup key={group.label} label={group.label}>
+                {group.models.map((model) => (
+                  <option key={model.id} value={model.id}>
+                    {model.label}
+                  </option>
+                ))}
+              </optgroup>
+            ))}
+            <option value={CUSTOM_MODEL}>custom…</option>
+          </select>
+          {customModel && (
+            <input
+              className="nodrag w-56 cursor-text text-neutral-500 outline-none"
+              value={data.model}
+              onChange={(e) => updateNodeData(id, { model: e.target.value })}
+              placeholder="provider/model"
+              spellCheck={false}
+              title="openrouter model slug"
+            />
+          )}
           <span className="flex-1" />
           <button
             className="nodrag text-neutral-500 hover:text-neutral-900"
@@ -233,9 +308,17 @@ function PromptNode({ id, data, width, selected }: NodeProps<PromptFlowNode>) {
                       {data.error && <p className="m-2 text-red-600">{data.error}</p>}
                       <div ref={chatEndRef} />
                     </div>
-                    <div className="border-t border-neutral-200 p-2">
+                    <div
+                      className="nodrag h-1 shrink-0 cursor-row-resize bg-transparent hover:bg-neutral-300"
+                      onPointerDown={startChatInputResize}
+                      title="drag to resize"
+                    />
+                    <div
+                      className="shrink-0 border-t border-neutral-200 p-2"
+                      style={{ height: chatInputHeight }}
+                    >
                       <textarea
-                        className="nodrag h-16 w-full resize-none outline-none placeholder:text-neutral-400"
+                        className="nodrag h-full w-full resize-none outline-none placeholder:text-neutral-400"
                         placeholder="describe the interface…"
                         value={draft}
                         onChange={(e) => setDraft(e.target.value)}
@@ -289,7 +372,7 @@ function PromptNode({ id, data, width, selected }: NodeProps<PromptFlowNode>) {
               <div className="flex h-full items-center justify-center text-neutral-400">
                 {data.loading
                   ? "generating…"
-                  : tab === "md" && !collapsed
+                  : tab === "md"
                     ? "nothing written yet"
                     : "nothing rendered yet"}
               </div>
