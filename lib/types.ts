@@ -1,6 +1,26 @@
-export type ChatMessage = {
-  role: "user" | "assistant";
-  content: string;
+/** OpenAI-style function call, as OpenRouter returns it. */
+export type ToolCall = {
+  id: string;
+  type: "function";
+  function: { name: string; arguments: string };
+};
+
+export type ChatMessage =
+  | { role: "user"; content: string }
+  | { role: "assistant"; content: string | null; tool_calls?: ToolCall[] }
+  | { role: "tool"; tool_call_id: string; content: string };
+
+/** A superseded document, snapshotted whenever a generation replaces `html`. */
+export type DocVersion = {
+  html: string;
+  ts: number;
+};
+
+/** Token totals for a node's most recent agent run, updated live per step. */
+export type RunUsage = {
+  promptTokens: number;
+  completionTokens: number;
+  steps: number;
 };
 
 /** Which editor a node's sidebar is showing, and so what its preview renders. */
@@ -11,6 +31,10 @@ export type PromptNodeData = {
   messages: ChatMessage[];
   html: string | null;
   markdown?: string | null;
+  /** Referenced from other nodes' chats as @name. */
+  name?: string;
+  versions?: DocVersion[];
+  usage?: RunUsage;
   tab?: NodeTab;
   sidebarWidth?: number;
   sidebarCollapsed?: boolean;
@@ -50,6 +74,9 @@ export const MIN_SIDEBAR_WIDTH = 160;
 
 export const DEFAULT_CHAT_INPUT_HEIGHT = 80;
 export const MIN_CHAT_INPUT_HEIGHT = 48;
+
+export const MAX_VERSIONS = 20;
+export const MAX_AGENT_STEPS = 10;
 
 export const API_KEY_STORAGE_KEY = "proto:openrouter-key";
 export const INSTRUCTIONS_STORAGE_KEY = "proto:instructions";

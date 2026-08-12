@@ -15,6 +15,13 @@ body {
   color: #171717;
 }
 
+/* Placeholder for the contenteditable chat input. */
+[contenteditable][data-placeholder]:empty::before {
+  content: attr(data-placeholder);
+  color: #a3a3a3;
+  pointer-events: none;
+}
+
 /* React Flow marks the pane grabbable at rest; only show the hand while actually panning. */
 .react-flow__pane.draggable {
   cursor: default;

@@ -4,27 +4,23 @@ import { ChatMessage } from "@/lib/types";
 export const maxDuration = 300;
 
 const SYSTEM_PROMPT = [
-  "You build user interface prototypes.",
-  "Reply with one complete, self-contained HTML document: inline CSS and inline JavaScript only.",
-  "Tailwind CSS is already injected into every document, so use Tailwind utility classes freely and never add the Tailwind script yourself.",
+  "You are an agent that builds and edits a user interface prototype — one complete, self-contained HTML document — using tools.",
+  "The document renders in a sandboxed iframe. Tailwind CSS is injected into every render, so use utility classes freely and never add the Tailwind script yourself.",
   "You may use third-party libraries via script tags or ES module imports from jsdelivr/unpkg/esm.sh; always pin major versions.",
-  "The document renders directly in a sandboxed iframe.",
-  "Every reply fully replaces the previous document, so always output the entire document.",
-  "When prior assistant messages contain HTML, that is the current document — apply the user's request as a modification of it, preserving unchanged parts unless asked otherwise.",
-  "Output raw HTML only. No markdown fences, no commentary.",
+  "Use write_document for the first version or large rewrites, and edit_document for targeted changes — prefer edits, they are much faster.",
+  "After changing the document, call check_render once and fix any errors it reports.",
+  "The current state of the document is provided below; user messages may include <referenced-node> blocks containing HTML from the user's other prototypes to draw from.",
+  "When you are done, reply with a one or two sentence summary of what changed. Never include the document itself in your reply.",
 ].join(" ");
 
-function stripFences(text: string): string {
-  const match = text.match(/^\s*```[a-z]*\n([\s\S]*?)\n```\s*$/i);
-  return match ? match[1] : text;
-}
-
 export async function POST(req: NextRequest) {
-  const { apiKey, model, messages, instructions } = (await req.json()) as {
+  const { apiKey, model, messages, instructions, tools, html } = (await req.json()) as {
     apiKey?: string;
     model?: string;
     messages?: ChatMessage[];
     instructions?: string;
+    tools?: unknown[];
+    html?: string | null;
   };
 
   if (!apiKey) {
@@ -35,9 +31,12 @@ export async function POST(req: NextRequest) {
   }
 
   // User instructions from settings apply to every node, on top of the base prompt.
-  const system = instructions?.trim()
+  let system = instructions?.trim()
     ? `${SYSTEM_PROMPT}\n\nThe user's standing instructions for every prototype:\n${instructions.trim()}`
     : SYSTEM_PROMPT;
+  system += html
+    ? `\n\nCurrent document:\n${html}`
+    : "\n\nThere is no document yet — create one with write_document.";
 
   let res: Response;
   try {
@@ -52,6 +51,7 @@ export async function POST(req: NextRequest) {
       body: JSON.stringify({
         model,
         messages: [{ role: "system", content: system }, ...messages],
+        ...(tools?.length ? { tools } : {}),
       }),
     });
   } catch (err) {
@@ -73,10 +73,10 @@ export async function POST(req: NextRequest) {
   }
 
   const data = await res.json();
-  const content: string | undefined = data?.choices?.[0]?.message?.content;
-  if (!content) {
+  const message = data?.choices?.[0]?.message;
+  if (!message) {
     return NextResponse.json({ error: "empty response from model" }, { status: 502 });
   }
 
-  return NextResponse.json({ html: stripFences(content).trim() });
+  return NextResponse.json({ message, usage: data?.usage ?? null });
 }

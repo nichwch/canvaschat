@@ -1,12 +1,13 @@
 "use client";
 
 import { memo, useEffect, useMemo, useRef, useState } from "react";
-import { NodeResizer, useReactFlow, type Node, type NodeProps } from "@xyflow/react";
+import { NodeResizer, useReactFlow, useStore, type Node, type NodeProps } from "@xyflow/react";
 import {
   DEFAULT_CHAT_INPUT_HEIGHT,
   DEFAULT_NODE_HEIGHT,
   DEFAULT_NODE_WIDTH,
   DEFAULT_SIDEBAR_WIDTH,
+  MAX_VERSIONS,
   MIN_CHAT_INPUT_HEIGHT,
   MIN_NODE_HEIGHT,
   MIN_NODE_WIDTH,
@@ -17,12 +18,16 @@ import {
 } from "@/lib/types";
 import { CUSTOM_MODEL, MODEL_GROUPS, isKnownModel } from "@/lib/models";
 import { getApiKey, getInstructions } from "@/lib/storage";
+import { compactRun, looksLikeHtmlDocument, runAgent } from "@/lib/agent/loop";
+import { buildMentionContext, splitMentions, type Mentionable } from "@/lib/mentions";
 import { useCanvasId } from "./CanvasContext";
 import { useDebouncedValue } from "./useDebouncedValue";
 import { withTailwind } from "@/lib/preview";
 import { markdownDocument } from "@/lib/markdown";
 import { ForkIcon, SidebarIcon, TrashIcon } from "./icons";
 import CodeEditor from "./CodeEditor";
+import MentionInput from "./MentionInput";
+import MentionChip from "./MentionChip";
 
 export type PromptFlowNode = Node<PromptNodeData, "prompt">;
 
@@ -46,14 +51,43 @@ function trackPointerDrag(onMove: (event: PointerEvent) => void) {
   window.addEventListener("pointerup", stop);
 }
 
+function formatTokens(count: number): string {
+  return count >= 1000 ? `${(count / 1000).toFixed(1)}k` : String(count);
+}
+
+/** Tool results the transcript should surface: executor errors and render errors. */
+function isToolFailure(content: string): boolean {
+  return content.startsWith("error:") || / error\(s\):/.test(content);
+}
+
 function PromptNode({ id, data, width, height, selected }: NodeProps<PromptFlowNode>) {
-  const { updateNodeData, deleteElements, setNodes, getNode, getZoom } =
+  const { updateNodeData, deleteElements, setNodes, getNode, getNodes, getZoom, fitView } =
     useReactFlow<PromptFlowNode>();
-  const [draft, setDraft] = useState("");
   // A model saved before it was in the list — or typed by hand — opens in custom mode.
   const [customModel, setCustomModel] = useState(() => !isKnownModel(data.model));
   const chatEndRef = useRef<HTMLDivElement>(null);
+  const abortRef = useRef<AbortController | null>(null);
   const canvasId = useCanvasId();
+
+  // Other nodes' names, kept reactive via a joined string so renames elsewhere
+  // update this node's chips/autocomplete without re-rendering on every drag.
+  const mentionKey = useStore((s) =>
+    s.nodes
+      .map((n) => `${n.id}\u0000${(n.data as PromptNodeData).name?.trim() ?? ""}`)
+      .join("\u0001")
+  );
+  const mentionables = useMemo<Mentionable[]>(
+    () =>
+      mentionKey
+        .split("\u0001")
+        .map((pair) => {
+          const [nodeId, name] = pair.split("\u0000");
+          return { id: nodeId, name };
+        })
+        .filter((m) => m.name && m.id !== id),
+    [mentionKey, id]
+  );
+  const mentionNames = useMemo(() => mentionables.map((m) => m.name), [mentionables]);
 
   const sidebarWidth = data.sidebarWidth ?? DEFAULT_SIDEBAR_WIDTH;
   const chatInputHeight = data.chatInputHeight ?? DEFAULT_CHAT_INPUT_HEIGHT;
@@ -79,59 +113,77 @@ function PromptNode({ id, data, width, height, selected }: NodeProps<PromptFlowN
     return previewHtml ? withTailwind(previewHtml) : null;
   }, [tab, previewMarkdown, previewHtml]);
 
-  async function send() {
-    const prompt = draft.trim();
-    if (!prompt || data.loading) return;
+  async function send(prompt: string) {
+    if (data.loading) return;
 
-    // Every assistant turn stores a full HTML document, so sending the raw
-    // history balloons the prompt by a whole document per turn. Only the
-    // latest render matters — send `data.html` (the document actually
-    // rendered, edits included) there and a stub everywhere else.
-    const lastAssistant = data.messages.findLastIndex((m) => m.role === "assistant");
-    const history = data.messages.map((m, i) => {
-      if (m.role !== "assistant") return m;
-      if (i === lastAssistant) return data.html ? { ...m, content: data.html } : m;
-      return { ...m, content: "(an earlier version of the document, since replaced)" };
+    const userMessage: ChatMessage = { role: "user", content: prompt };
+    const baseMessages: ChatMessage[] = [...data.messages, userMessage];
+    updateNodeData(id, {
+      messages: baseMessages,
+      loading: true,
+      error: null,
+      // Zeroed rather than cleared, so the footer ticks up from 0 this run.
+      usage: { promptTokens: 0, completionTokens: 0, steps: 0 },
     });
-    const seededHistory =
-      data.html && lastAssistant === -1
-        ? [{ role: "assistant" as const, content: data.html }, ...history]
-        : history;
-    const messages: ChatMessage[] = [...seededHistory, { role: "user", content: prompt }];
-    setDraft("");
-    updateNodeData(id, { messages, loading: true, error: null });
+
+    // Pre-agent transcripts stored whole documents in assistant turns; stub
+    // them in the API copy — the route injects the current document anyway.
+    const priorMessages: ChatMessage[] = data.messages.map((m) =>
+      m.role === "assistant" && m.content && looksLikeHtmlDocument(m.content)
+        ? { ...m, content: "(rendered an earlier version of the document)" }
+        : m
+    );
+
+    const controller = new AbortController();
+    abortRef.current = controller;
+
+    // Mentions expand into the API copy of this turn only; the stored
+    // transcript keeps the raw @name text for chip rendering.
+    const mentionTargets = getNodes()
+      .filter((n) => n.id !== id && n.data.name?.trim())
+      .map((n) => ({ name: n.data.name!.trim(), data: n.data }));
+    const context = buildMentionContext(prompt, mentionTargets);
+    const apiMessages: ChatMessage[] = [
+      ...priorMessages,
+      { role: "user", content: context ? `${prompt}\n\n${context}` : prompt },
+    ];
 
     try {
-      const res = await fetch("/api/generate", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        // Give up instead of leaving the node stuck on "generating…" forever.
-        signal: AbortSignal.timeout(240_000),
-        body: JSON.stringify({
-          apiKey: getApiKey(),
-          instructions: getInstructions(canvasId),
-          model: data.model,
-          messages,
-        }),
+      const result = await runAgent({
+        apiKey: getApiKey(),
+        model: data.model,
+        instructions: getInstructions(canvasId),
+        messages: apiMessages,
+        html: data.html,
+        versions: data.versions ?? [],
+        signal: controller.signal,
+        onUpdate: (run, usage) =>
+          updateNodeData(id, { messages: [...baseMessages, ...run], usage }),
       });
-      const body = await res.json();
-      if (!res.ok) throw new Error(body.error ?? "request failed");
+
+      // Snapshot the document this run replaced.
+      const versions =
+        data.html && data.html !== result.html
+          ? [...(data.versions ?? []), { html: data.html, ts: Date.now() }].slice(-MAX_VERSIONS)
+          : data.versions;
 
       updateNodeData(id, {
-        messages: [...messages, { role: "assistant", content: body.html }],
-        html: body.html,
+        messages: [...baseMessages, ...compactRun(result.messages)],
+        html: result.html,
+        versions,
+        usage: result.usage,
         loading: false,
       });
     } catch (err) {
+      const aborted = err instanceof DOMException && err.name === "AbortError";
       updateNodeData(id, {
+        // Drop any partial run lines; the working document was never committed.
+        messages: baseMessages,
         loading: false,
-        error:
-          err instanceof DOMException && err.name === "TimeoutError"
-            ? "timed out after 4 minutes"
-            : err instanceof Error
-              ? err.message
-              : "request failed",
+        error: aborted ? "canceled" : err instanceof Error ? err.message : "request failed",
       });
+    } finally {
+      abortRef.current = null;
     }
   }
 
@@ -146,7 +198,14 @@ function PromptNode({ id, data, width, height, selected }: NodeProps<PromptFlowN
       width: nodeWidth,
       height: node.height ?? DEFAULT_NODE_HEIGHT,
       selected: true,
-      data: { ...data, messages: [...data.messages], loading: false, error: null },
+      data: {
+        ...data,
+        // Names resolve mentions, so the copy must not collide with the original.
+        name: data.name?.trim() ? `${data.name.trim()} fork` : undefined,
+        messages: [...data.messages],
+        loading: false,
+        error: null,
+      },
     };
     // Deselect everything else, otherwise the source node drags along with the copy.
     setNodes((current) => [...current.map((n) => ({ ...n, selected: false })), copy]);
@@ -154,6 +213,25 @@ function PromptNode({ id, data, width, height, selected }: NodeProps<PromptFlowN
 
   function remove() {
     deleteElements({ nodes: [{ id }] });
+  }
+
+  function findByName(name: string) {
+    return getNodes().find((n) => n.id !== id && n.data.name?.trim() === name);
+  }
+
+  function chipTarget(name: string) {
+    const node = findByName(name);
+    if (!node) return null;
+    return {
+      html: node.data.html,
+      width: node.width ?? DEFAULT_NODE_WIDTH,
+      height: node.height ?? DEFAULT_NODE_HEIGHT,
+    };
+  }
+
+  function jumpTo(name: string) {
+    const node = findByName(name);
+    if (node) fitView({ nodes: [{ id: node.id }], duration: 600, padding: 0.15, maxZoom: 1 });
   }
 
   function startSidebarResize(event: React.PointerEvent) {
@@ -216,6 +294,14 @@ function PromptNode({ id, data, width, height, selected }: NodeProps<PromptFlowN
           >
             <SidebarIcon collapsed={collapsed} />
           </button>
+          <input
+            className="nodrag w-24 cursor-text outline-none placeholder:text-neutral-300"
+            value={data.name ?? ""}
+            onChange={(e) => updateNodeData(id, { name: e.target.value })}
+            placeholder="name"
+            spellCheck={false}
+            title="node name — reference from other chats as @name"
+          />
           <select
             className="nodrag cursor-pointer bg-white text-neutral-500 outline-none hover:text-neutral-900"
             value={customModel ? CUSTOM_MODEL : data.model}
@@ -293,18 +379,72 @@ function PromptNode({ id, data, width, height, selected }: NodeProps<PromptFlowN
                 {tab === "chat" && (
                   <>
                     <div className="nowheel min-h-0 flex-1 overflow-y-auto p-2">
-                      {data.messages.map((m, i) =>
-                        m.role === "user" ? (
-                          <p key={i} className="m-2">
-                            {m.content}
-                          </p>
-                        ) : (
-                          <p key={i} className="m-2 text-neutral-400">
-                            rendered
-                          </p>
-                        )
+                      {data.messages.map((m, i) => {
+                        if (m.role === "user") {
+                          return (
+                            <p key={i} className="m-2 whitespace-pre-wrap">
+                              {splitMentions(m.content, mentionNames).map((part, j) =>
+                                part.type === "text" ? (
+                                  <span key={j}>{part.value}</span>
+                                ) : (
+                                  <MentionChip
+                                    key={j}
+                                    name={part.name}
+                                    target={chipTarget(part.name)}
+                                    onJump={() => jumpTo(part.name)}
+                                  />
+                                )
+                              )}
+                            </p>
+                          );
+                        }
+                        if (m.role === "tool") {
+                          // Successes stay quiet; failures the model had to
+                          // recover from (or render errors) are worth seeing.
+                          if (!isToolFailure(m.content)) return null;
+                          return (
+                            <p key={i} className="m-2 ml-4 whitespace-pre-wrap text-red-400">
+                              {m.content.slice(0, 300)}
+                            </p>
+                          );
+                        }
+                        return (
+                          <div key={i}>
+                            {m.tool_calls?.map((call, j) => (
+                              <p key={j} className="m-2 text-neutral-400">
+                                ↳ {call.function.name}
+                              </p>
+                            ))}
+                            {m.content &&
+                              // Pre-agent transcripts stored whole documents here.
+                              (looksLikeHtmlDocument(m.content) ? (
+                                <p className="m-2 text-neutral-400">rendered</p>
+                              ) : (
+                                <p className="m-2 whitespace-pre-wrap text-neutral-400">
+                                  {m.content}
+                                </p>
+                              ))}
+                          </div>
+                        );
+                      })}
+                      {data.loading && (
+                        <p className="m-2 text-neutral-400">
+                          generating…{" "}
+                          <button
+                            className="nodrag underline hover:text-neutral-900"
+                            onClick={() => abortRef.current?.abort()}
+                          >
+                            cancel
+                          </button>
+                        </p>
                       )}
-                      {data.loading && <p className="m-2 text-neutral-400">generating…</p>}
+                      {data.usage && data.usage.steps > 0 && (
+                        <p className="m-2 text-neutral-300">
+                          {formatTokens(data.usage.promptTokens)} in ·{" "}
+                          {formatTokens(data.usage.completionTokens)} out · {data.usage.steps}{" "}
+                          {data.usage.steps === 1 ? "step" : "steps"}
+                        </p>
+                      )}
                       {data.error && <p className="m-2 text-red-600">{data.error}</p>}
                       <div ref={chatEndRef} />
                     </div>
@@ -317,17 +457,11 @@ function PromptNode({ id, data, width, height, selected }: NodeProps<PromptFlowN
                       className="shrink-0 border-t border-neutral-200 p-2"
                       style={{ height: chatInputHeight }}
                     >
-                      <textarea
-                        className="nodrag h-full w-full resize-none outline-none placeholder:text-neutral-400"
-                        placeholder="describe the interface…"
-                        value={draft}
-                        onChange={(e) => setDraft(e.target.value)}
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter" && !e.shiftKey) {
-                            e.preventDefault();
-                            send();
-                          }
-                        }}
+                      <MentionInput
+                        getOptions={() => mentionables}
+                        placeholder="describe the interface… @ to reference another node"
+                        disabled={data.loading}
+                        onSubmit={send}
                       />
                     </div>
                   </>
