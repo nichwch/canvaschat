@@ -206,7 +206,7 @@ function CanvasInner({ canvasId, name }: { canvasId: string; name: string }) {
           position="bottom-left"
           pannable
           zoomable
-          className="!border !border-neutral-300 !bg-white"
+          className="!m-2 !border !border-neutral-300 !bg-white"
           nodeColor="#e5e5e5"
           nodeStrokeColor="#a3a3a3"
           maskColor="rgba(250, 250, 250, 0.7)"
