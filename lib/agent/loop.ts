@@ -2,14 +2,17 @@ import {
   MAX_AGENT_STEPS,
   type ChatMessage,
   type DocVersion,
+  type ReasoningEffort,
   type RunUsage,
   type ToolCall,
 } from "@/lib/types";
 import { TOOL_SCHEMAS, executeToolCall, type ToolContext } from "./tools";
+import type { CompletionMessage, CompletionUsage } from "./stream";
 
 export type RunAgentOptions = {
   apiKey: string;
   model: string;
+  reasoning: ReasoningEffort;
   instructions: string;
   /** Full transcript for the API, ending with the new user turn (mentions already expanded). */
   messages: ChatMessage[];
@@ -18,6 +21,8 @@ export type RunAgentOptions = {
   signal: AbortSignal;
   /** Fires with the run's new messages and usage so the transcript updates live. */
   onUpdate?: (runMessages: ChatMessage[], usage: RunUsage) => void;
+  /** Fires while a step is still streaming, so progress is visible mid-call. */
+  onProgress?: (usage: RunUsage, tool: string | null) => void;
 };
 
 export type RunAgentResult = {
@@ -45,14 +50,22 @@ export async function runAgent(opts: RunAgentOptions): Promise<RunAgentResult> {
   };
 
   for (let step = 0; step < MAX_AGENT_STEPS; step++) {
+    // Committed totals; the in-flight step adds its live estimate on top.
+    const settled = { ...usage };
     const { message, usage: stepUsage } = await requestCompletion(
       opts,
       [...opts.messages, ...run],
-      working
+      working,
+      (tokens, tool) => {
+        usage.completionTokens = settled.completionTokens + tokens;
+        usage.steps = settled.steps + 1;
+        opts.onProgress?.({ ...usage }, tool);
+      }
     );
-    usage.steps += 1;
-    usage.promptTokens += stepUsage?.prompt_tokens ?? 0;
-    usage.completionTokens += stepUsage?.completion_tokens ?? 0;
+    usage.steps = settled.steps + 1;
+    usage.promptTokens = settled.promptTokens + (stepUsage?.prompt_tokens ?? 0);
+    usage.completionTokens =
+      settled.completionTokens + (stepUsage?.completion_tokens ?? usage.completionTokens - settled.completionTokens);
     const toolCalls: ToolCall[] | undefined = message.tool_calls?.length
       ? message.tool_calls
       : undefined;
@@ -66,7 +79,13 @@ export async function runAgent(opts: RunAgentOptions): Promise<RunAgentResult> {
       return { messages: run, html: working, usage };
     }
 
-    run.push({ role: "assistant", content: message.content ?? null, tool_calls: toolCalls });
+    run.push({
+      role: "assistant",
+      content: message.content ?? null,
+      tool_calls: toolCalls,
+      // Passed back on the next step; some providers reject tool loops without it.
+      ...(message.reasoning_details ? { reasoning_details: message.reasoning_details } : {}),
+    });
     opts.onUpdate?.([...run], usage);
 
     for (const call of toolCalls) {
@@ -79,14 +98,12 @@ export async function runAgent(opts: RunAgentOptions): Promise<RunAgentResult> {
   throw new Error(`stopped after ${MAX_AGENT_STEPS} steps without finishing`);
 }
 
-type CompletionMessage = { content?: string | null; tool_calls?: ToolCall[] };
-type CompletionUsage = { prompt_tokens?: number; completion_tokens?: number } | null;
-
 /** One model call via the pass-through route, retrying transient failures. */
 async function requestCompletion(
   opts: RunAgentOptions,
   messages: ChatMessage[],
-  html: string | null
+  html: string | null,
+  onProgress: (tokens: number, tool: string | null) => void
 ): Promise<{ message: CompletionMessage; usage: CompletionUsage }> {
   let lastError = "request failed";
 
@@ -99,36 +116,91 @@ async function requestCompletion(
         method: "POST",
         headers: { "Content-Type": "application/json" },
         // The run's own signal (cancel button) plus a per-request stall guard.
-        signal: AbortSignal.any([opts.signal, AbortSignal.timeout(240_000)]),
+        signal: AbortSignal.any([opts.signal, AbortSignal.timeout(300_000)]),
         body: JSON.stringify({
           apiKey: opts.apiKey,
           model: opts.model,
+          reasoning: opts.reasoning,
           instructions: opts.instructions,
           messages,
           html,
-          tools: TOOL_SCHEMAS,
+          versionCount: opts.versions.length,
+          // Squeezing a whole document through a JSON tool argument is slow and
+          // truncation-prone, so the first generation runs without tools and
+          // replies with raw HTML.
+          ...(html ? { tools: TOOL_SCHEMAS } : {}),
         }),
       });
     } catch (err) {
       if (opts.signal.aborted) throw new DOMException("aborted", "AbortError");
       if (err instanceof DOMException && err.name === "TimeoutError") {
-        throw new Error("timed out after 4 minutes");
+        throw new Error("timed out after 5 minutes");
       }
       lastError = "could not reach the server";
       continue;
     }
 
-    const body = await res.json().catch(() => null);
-    if (res.ok && body?.message) {
-      return { message: body.message as CompletionMessage, usage: body.usage ?? null };
+    if (!res.ok || !res.body) {
+      const body = await res.json().catch(() => null);
+      lastError = body?.error ?? `request failed (${res.status})`;
+      // Rate limits and upstream blips are worth retrying; anything else is not.
+      if (res.status !== 429 && res.status < 500) throw new Error(lastError);
+      continue;
     }
 
-    lastError = body?.error ?? `request failed (${res.status})`;
-    // Rate limits and upstream blips are worth retrying; anything else is not.
-    if (res.status !== 429 && res.status < 500) throw new Error(lastError);
+    const result = await readStream(res.body, onProgress);
+    if (result.error) throw new Error(result.error);
+    if (result.message) return { message: result.message, usage: result.usage };
+    lastError = "empty response from model";
   }
 
   throw new Error(lastError);
+}
+
+/** Reads the route's NDJSON progress stream, returning the assembled message. */
+async function readStream(
+  body: ReadableStream<Uint8Array>,
+  onProgress: (tokens: number, tool: string | null) => void
+): Promise<{ message?: CompletionMessage; usage: CompletionUsage; error?: string }> {
+  const reader = body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let message: CompletionMessage | undefined;
+  let usage: CompletionUsage = null;
+  let error: string | undefined;
+
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split("\n");
+    buffer = lines.pop() ?? "";
+
+    for (const raw of lines) {
+      if (!raw.trim()) continue;
+      let event: {
+        type: string;
+        tokens?: number;
+        tool?: string | null;
+        message?: CompletionMessage;
+        usage?: CompletionUsage;
+        error?: string;
+      };
+      try {
+        event = JSON.parse(raw);
+      } catch {
+        continue;
+      }
+      if (event.type === "progress") onProgress(event.tokens ?? 0, event.tool ?? null);
+      if (event.type === "error") error = event.error;
+      if (event.type === "done") {
+        message = event.message;
+        usage = event.usage ?? null;
+      }
+    }
+  }
+
+  return { message, usage, error };
 }
 
 function sleep(ms: number, signal: AbortSignal): Promise<void> {
@@ -178,8 +250,11 @@ export function compactRun(messages: ChatMessage[]): ChatMessage[] {
       return { ...m, content: `${m.content.slice(0, MAX_STORED_TOOL_RESULT)}… (truncated)` };
     }
     if (m.role === "assistant" && m.tool_calls) {
+      // Reasoning blocks only matter inside the run that produced them.
+      const rest = { ...m };
+      delete rest.reasoning_details;
       return {
-        ...m,
+        ...rest,
         tool_calls: m.tool_calls.map((call) =>
           call.function.name === "write_document" ||
           call.function.arguments.length > MAX_STORED_TOOL_ARGS

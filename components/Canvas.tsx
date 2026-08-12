@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import {
   Background,
   BackgroundVariant,
+  MiniMap,
   ReactFlow,
   ReactFlowProvider,
   applyNodeChanges,
@@ -23,6 +24,7 @@ import {
   DEFAULT_MODEL,
   DEFAULT_NODE_HEIGHT,
   DEFAULT_NODE_WIDTH,
+  DRAG_HANDLE_SELECTOR,
   type ExportLayout,
   type PromptNodeData,
   type StoredNode,
@@ -35,6 +37,7 @@ function toFlowNodes(stored: StoredNode[]): PromptFlowNode[] {
     ...n,
     width: n.width ?? DEFAULT_NODE_WIDTH,
     height: n.height ?? DEFAULT_NODE_HEIGHT,
+    dragHandle: DRAG_HANDLE_SELECTOR,
     data: { ...n.data, loading: false, error: null },
   }));
 }
@@ -54,6 +57,7 @@ function toStoredNodes(nodes: PromptFlowNode[]): StoredNode[] {
       name: data.name,
       versions: data.versions,
       usage: data.usage,
+      reasoning: data.reasoning,
       tab: data.tab,
       sidebarWidth: data.sidebarWidth,
       sidebarCollapsed: data.sidebarCollapsed,
@@ -160,6 +164,7 @@ function CanvasInner({ canvasId, name }: { canvasId: string; name: string }) {
         position,
         width: DEFAULT_NODE_WIDTH,
         height: DEFAULT_NODE_HEIGHT,
+        dragHandle: DRAG_HANDLE_SELECTOR,
         selected: true,
         data: newNodeData(),
       },
@@ -197,6 +202,15 @@ function CanvasInner({ canvasId, name }: { canvasId: string; name: string }) {
         fitViewOptions={{ padding: 0.1, maxZoom: 1 }}
       >
         <Background variant={BackgroundVariant.Dots} gap={16} size={1} color="#d4d4d4" />
+        <MiniMap
+          position="bottom-left"
+          pannable
+          zoomable
+          className="!border !border-neutral-300 !bg-white"
+          nodeColor="#e5e5e5"
+          nodeStrokeColor="#a3a3a3"
+          maskColor="rgba(250, 250, 250, 0.7)"
+        />
       </ReactFlow>
 
       {/* Without a key nothing on the canvas can work, so the modal blocks until one is entered. */}

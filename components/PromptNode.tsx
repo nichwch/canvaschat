@@ -7,7 +7,11 @@ import {
   DEFAULT_NODE_HEIGHT,
   DEFAULT_NODE_WIDTH,
   DEFAULT_SIDEBAR_WIDTH,
+  DRAG_HANDLE_CLASS,
+  DRAG_HANDLE_SELECTOR,
+  DEFAULT_REASONING,
   MAX_VERSIONS,
+  REASONING_EFFORTS,
   MIN_CHAT_INPUT_HEIGHT,
   MIN_NODE_HEIGHT,
   MIN_NODE_WIDTH,
@@ -15,6 +19,7 @@ import {
   type ChatMessage,
   type NodeTab,
   type PromptNodeData,
+  type ReasoningEffort,
 } from "@/lib/types";
 import { CUSTOM_MODEL, MODEL_GROUPS, isKnownModel } from "@/lib/models";
 import { getApiKey, getInstructions } from "@/lib/storage";
@@ -55,6 +60,10 @@ function formatTokens(count: number): string {
   return count >= 1000 ? `${(count / 1000).toFixed(1)}k` : String(count);
 }
 
+function formatElapsed(seconds: number): string {
+  return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
+}
+
 /** Tool results the transcript should surface: executor errors and render errors. */
 function isToolFailure(content: string): boolean {
   return content.startsWith("error:") || / error\(s\):/.test(content);
@@ -68,6 +77,17 @@ function PromptNode({ id, data, width, height, selected }: NodeProps<PromptFlowN
   const chatEndRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
   const canvasId = useCanvasId();
+  // Local, not node data — a per-second tick must not churn canvas storage.
+  const [activity, setActivity] = useState<{ startedAt: number; tool: string | null } | null>(null);
+  const [elapsed, setElapsed] = useState(0);
+
+  useEffect(() => {
+    if (!activity) return;
+    const tick = () => setElapsed(Math.floor((Date.now() - activity.startedAt) / 1000));
+    tick();
+    const timer = setInterval(tick, 1000);
+    return () => clearInterval(timer);
+  }, [activity]);
 
   // Other nodes' names, kept reactive via a joined string so renames elsewhere
   // update this node's chips/autocomplete without re-rendering on every drag.
@@ -136,6 +156,7 @@ function PromptNode({ id, data, width, height, selected }: NodeProps<PromptFlowN
 
     const controller = new AbortController();
     abortRef.current = controller;
+    setActivity({ startedAt: Date.now(), tool: null });
 
     // Mentions expand into the API copy of this turn only; the stored
     // transcript keeps the raw @name text for chip rendering.
@@ -152,13 +173,20 @@ function PromptNode({ id, data, width, height, selected }: NodeProps<PromptFlowN
       const result = await runAgent({
         apiKey: getApiKey(),
         model: data.model,
+        reasoning: data.reasoning ?? DEFAULT_REASONING,
         instructions: getInstructions(canvasId),
         messages: apiMessages,
         html: data.html,
         versions: data.versions ?? [],
         signal: controller.signal,
-        onUpdate: (run, usage) =>
-          updateNodeData(id, { messages: [...baseMessages, ...run], usage }),
+        onUpdate: (run, usage) => {
+          updateNodeData(id, { messages: [...baseMessages, ...run], usage });
+          setActivity((a) => (a ? { ...a, tool: null } : a));
+        },
+        onProgress: (usage, tool) => {
+          updateNodeData(id, { usage });
+          setActivity((a) => (a ? { ...a, tool } : a));
+        },
       });
 
       // Snapshot the document this run replaced.
@@ -184,6 +212,7 @@ function PromptNode({ id, data, width, height, selected }: NodeProps<PromptFlowN
       });
     } finally {
       abortRef.current = null;
+      setActivity(null);
     }
   }
 
@@ -195,6 +224,7 @@ function PromptNode({ id, data, width, height, selected }: NodeProps<PromptFlowN
       id: crypto.randomUUID(),
       type: "prompt",
       position: { x: node.position.x + nodeWidth + 40, y: node.position.y },
+      dragHandle: DRAG_HANDLE_SELECTOR,
       width: nodeWidth,
       height: node.height ?? DEFAULT_NODE_HEIGHT,
       selected: true,
@@ -285,7 +315,9 @@ function PromptNode({ id, data, width, height, selected }: NodeProps<PromptFlowN
           selected ? "border-neutral-900" : "border-neutral-300"
         }`}
       >
-        <div className="flex cursor-grab items-center gap-2 border-b border-neutral-200 p-2 active:cursor-grabbing">
+        <div
+          className={`${DRAG_HANDLE_CLASS} flex cursor-grab items-center gap-2 border-b border-neutral-200 p-2 active:cursor-grabbing`}
+        >
           <button
             className="nodrag text-neutral-500 hover:text-neutral-900"
             onClick={() => updateNodeData(id, { sidebarCollapsed: !collapsed })}
@@ -336,6 +368,18 @@ function PromptNode({ id, data, width, height, selected }: NodeProps<PromptFlowN
               title="openrouter model slug"
             />
           )}
+          <select
+            className="nodrag cursor-pointer bg-white text-neutral-400 outline-none hover:text-neutral-900"
+            value={data.reasoning ?? DEFAULT_REASONING}
+            onChange={(e) => updateNodeData(id, { reasoning: e.target.value as ReasoningEffort })}
+            title="reasoning effort — how long the model may think before acting"
+          >
+            {REASONING_EFFORTS.map((effort) => (
+              <option key={effort} value={effort}>
+                think: {effort}
+              </option>
+            ))}
+          </select>
           <span className="flex-1" />
           <button
             className="nodrag text-neutral-500 hover:text-neutral-900"
@@ -378,7 +422,7 @@ function PromptNode({ id, data, width, height, selected }: NodeProps<PromptFlowN
 
                 {tab === "chat" && (
                   <>
-                    <div className="nowheel min-h-0 flex-1 overflow-y-auto p-2">
+                    <div className="nowheel min-h-0 flex-1 cursor-auto select-text overflow-y-auto p-2">
                       {data.messages.map((m, i) => {
                         if (m.role === "user") {
                           return (
@@ -429,7 +473,8 @@ function PromptNode({ id, data, width, height, selected }: NodeProps<PromptFlowN
                       })}
                       {data.loading && (
                         <p className="m-2 text-neutral-400">
-                          generating…{" "}
+                          {activity?.tool ? `${activity.tool}…` : "generating…"}{" "}
+                          {formatElapsed(elapsed)}{" "}
                           <button
                             className="nodrag underline hover:text-neutral-900"
                             onClick={() => abortRef.current?.abort()}
@@ -438,7 +483,7 @@ function PromptNode({ id, data, width, height, selected }: NodeProps<PromptFlowN
                           </button>
                         </p>
                       )}
-                      {data.usage && data.usage.steps > 0 && (
+                      {data.usage && (data.usage.steps > 0 || data.usage.completionTokens > 0) && (
                         <p className="m-2 text-neutral-300">
                           {formatTokens(data.usage.promptTokens)} in ·{" "}
                           {formatTokens(data.usage.completionTokens)} out · {data.usage.steps}{" "}

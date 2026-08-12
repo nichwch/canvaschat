@@ -7,7 +7,13 @@ export type ToolCall = {
 
 export type ChatMessage =
   | { role: "user"; content: string }
-  | { role: "assistant"; content: string | null; tool_calls?: ToolCall[] }
+  | {
+      role: "assistant";
+      content: string | null;
+      tool_calls?: ToolCall[];
+      /** Provider reasoning blocks; some models require them back mid-run. */
+      reasoning_details?: Record<string, unknown>[];
+    }
   | { role: "tool"; tool_call_id: string; content: string };
 
 /** A superseded document, snapshotted whenever a generation replaces `html`. */
@@ -15,6 +21,12 @@ export type DocVersion = {
   html: string;
   ts: number;
 };
+
+/** How hard the model may think before acting; "off" disables reasoning. */
+export type ReasoningEffort = "off" | "low" | "medium" | "high";
+
+export const REASONING_EFFORTS: ReasoningEffort[] = ["off", "low", "medium", "high"];
+export const DEFAULT_REASONING: ReasoningEffort = "low";
 
 /** Token totals for a node's most recent agent run, updated live per step. */
 export type RunUsage = {
@@ -35,6 +47,7 @@ export type PromptNodeData = {
   name?: string;
   versions?: DocVersion[];
   usage?: RunUsage;
+  reasoning?: ReasoningEffort;
   tab?: NodeTab;
   sidebarWidth?: number;
   sidebarCollapsed?: boolean;
@@ -77,6 +90,10 @@ export const MIN_CHAT_INPUT_HEIGHT = 48;
 
 export const MAX_VERSIONS = 20;
 export const MAX_AGENT_STEPS = 10;
+
+/** Only the header drags the node, so text elsewhere stays selectable. */
+export const DRAG_HANDLE_CLASS = "node-drag-handle";
+export const DRAG_HANDLE_SELECTOR = `.${DRAG_HANDLE_CLASS}`;
 
 export const API_KEY_STORAGE_KEY = "proto:openrouter-key";
 export const INSTRUCTIONS_STORAGE_KEY = "proto:instructions";

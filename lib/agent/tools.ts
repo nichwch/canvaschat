@@ -57,7 +57,20 @@ export const TOOL_SCHEMAS = [
     function: {
       name: "fetch_version",
       description:
-        "Fetch an older saved version of the document. n=1 is the most recently saved version, n=2 the one before that.",
+        "Read an older saved version of the document without changing anything. n=1 is the most recently saved version, n=2 the one before that. To make an old version current, use restore_version instead — do not copy it back by hand.",
+      parameters: {
+        type: "object",
+        properties: { n: { type: "integer", minimum: 1 } },
+        required: ["n"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "restore_version",
+      description:
+        "Make an older saved version the current document, in one step. n=1 is the most recently saved version, n=2 the one before that. Much faster than fetching and rewriting.",
       parameters: {
         type: "object",
         properties: { n: { type: "integer", minimum: 1 } },
@@ -66,6 +79,19 @@ export const TOOL_SCHEMAS = [
     },
   },
 ];
+
+/** Resolves n (1 = most recently saved) to a version, or an error message. */
+function lookupVersion(n: unknown, versions: DocVersion[]): DocVersion | string {
+  if (!versions.length) return "error: no saved versions yet";
+  if (typeof n !== "number" || !Number.isInteger(n) || n < 1) {
+    return "error: n must be a positive integer";
+  }
+  const version = versions[versions.length - n];
+  if (!version) {
+    return `error: n must be between 1 (most recent saved) and ${versions.length} (oldest)`;
+  }
+  return version;
+}
 
 /** How long check_render lets the document run before reporting. */
 const RENDER_CHECK_MS = 2500;
@@ -112,17 +138,16 @@ export async function executeToolCall(call: ToolCall, ctx: ToolContext): Promise
     }
 
     case "fetch_version": {
-      const n = args.n;
-      if (typeof n !== "number" || !Number.isInteger(n) || n < 1) {
-        return "error: n must be a positive integer";
-      }
-      const version = ctx.versions[ctx.versions.length - n];
-      if (!version) {
-        return ctx.versions.length
-          ? `error: only ${ctx.versions.length} saved version(s)`
-          : "error: no saved versions yet";
-      }
-      return `version saved ${new Date(version.ts).toLocaleString()}:\n\n${version.html}`;
+      const found = lookupVersion(args.n, ctx.versions);
+      if (typeof found === "string") return found;
+      return `version saved ${new Date(found.ts).toLocaleString()}:\n\n${found.html}`;
+    }
+
+    case "restore_version": {
+      const found = lookupVersion(args.n, ctx.versions);
+      if (typeof found === "string") return found;
+      ctx.setHtml(found.html);
+      return `ok — restored the version saved ${new Date(found.ts).toLocaleString()}`;
     }
 
     default:

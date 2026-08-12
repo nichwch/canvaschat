@@ -22,6 +22,12 @@ body {
   pointer-events: none;
 }
 
+/* Nodes drag by their header only (dragHandle), so the body shouldn't advertise grabbiness. */
+.react-flow__node.draggable,
+.react-flow__node.selectable {
+  cursor: default;
+}
+
 /* React Flow marks the pane grabbable at rest; only show the hand while actually panning. */
 .react-flow__pane.draggable {
   cursor: default;
