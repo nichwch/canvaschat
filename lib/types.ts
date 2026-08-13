@@ -6,7 +6,7 @@ export type ToolCall = {
 };
 
 export type ChatMessage =
-  | { role: "user"; content: string }
+  | { role: "user"; content: string; images?: string[] }
   | {
       role: "assistant";
       content: string | null;

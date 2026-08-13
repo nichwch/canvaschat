@@ -154,6 +154,17 @@ export default function SettingsModal({
               enter an openrouter api key to use this canvas. it is stored in this browser only.
             </p>
           )}
+          <p className="mt-1 text-neutral-400">
+            create one at{" "}
+            <a
+              className="underline hover:text-neutral-900"
+              href="https://openrouter.ai/settings/keys"
+              target="_blank"
+              rel="noreferrer"
+            >
+              openrouter.ai/settings/keys
+            </a>
+          </p>
         </div>
 
         {canvasId && (

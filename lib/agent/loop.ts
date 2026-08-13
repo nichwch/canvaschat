@@ -98,6 +98,20 @@ export async function runAgent(opts: RunAgentOptions): Promise<RunAgentResult> {
   throw new Error(`stopped after ${MAX_AGENT_STEPS} steps without finishing`);
 }
 
+type WirePart = { type: "text"; text: string } | { type: "image_url"; image_url: { url: string } };
+
+/** User messages with images become multimodal content parts on the wire. */
+function toWireMessage(m: ChatMessage): ChatMessage | { role: "user"; content: WirePart[] } {
+  if (m.role !== "user" || !m.images?.length) return m;
+  return {
+    role: "user",
+    content: [
+      ...(m.content ? [{ type: "text" as const, text: m.content }] : []),
+      ...m.images.map((url) => ({ type: "image_url" as const, image_url: { url } })),
+    ],
+  };
+}
+
 /** One model call via the pass-through route, retrying transient failures. */
 async function requestCompletion(
   opts: RunAgentOptions,
@@ -122,7 +136,7 @@ async function requestCompletion(
           model: opts.model,
           reasoning: opts.reasoning,
           instructions: opts.instructions,
-          messages,
+          messages: messages.map(toWireMessage),
           html,
           versionCount: opts.versions.length,
           // Squeezing a whole document through a JSON tool argument is slow and

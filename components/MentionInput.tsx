@@ -2,6 +2,7 @@
 
 import { useRef, useState } from "react";
 import type { Mentionable } from "@/lib/mentions";
+import { isImageFile, prepareImage } from "@/lib/images";
 
 /** Matches the user's mockup; also used for transcript chips. */
 export const MENTION_CHIP_CLASS =
@@ -23,12 +24,20 @@ export default function MentionInput({
   placeholder: string;
   /** While true, Enter keeps the draft instead of submitting into a busy node. */
   disabled?: boolean;
-  onSubmit: (text: string) => void;
+  onSubmit: (text: string, images: string[]) => void;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const [query, setQuery] = useState<string | null>(null);
   const [options, setOptions] = useState<Mentionable[]>([]);
   const [active, setActive] = useState(0);
+  const [images, setImages] = useState<string[]>([]);
+
+  async function addImages(files: FileList | File[]) {
+    const accepted = [...files].filter(isImageFile);
+    if (!accepted.length) return;
+    const prepared = await Promise.all(accepted.map(prepareImage));
+    setImages((current) => [...current, ...prepared]);
+  }
 
   const filtered =
     query === null
@@ -115,10 +124,11 @@ export default function MentionInput({
   function submit() {
     if (!ref.current || disabled) return;
     const text = serialize(ref.current).replace(/ /g, " ").trim();
-    if (!text) return;
+    if (!text && !images.length) return;
     ref.current.innerHTML = "";
     setQuery(null);
-    onSubmit(text);
+    setImages([]);
+    onSubmit(text, images);
   }
 
   function onKeyDown(event: React.KeyboardEvent) {
@@ -147,7 +157,14 @@ export default function MentionInput({
   }
 
   return (
-    <div className="relative h-full">
+    <div
+      className="relative flex h-full flex-col"
+      onDragOver={(e) => e.preventDefault()}
+      onDrop={(e) => {
+        e.preventDefault();
+        void addImages(e.dataTransfer.files);
+      }}
+    >
       {query !== null && filtered.length > 0 && (
         <div className="nodrag absolute bottom-full left-0 right-0 z-20 mb-2 max-h-40 overflow-y-auto border border-neutral-300 bg-white">
           {filtered.map((option, i) => (
@@ -165,9 +182,27 @@ export default function MentionInput({
           ))}
         </div>
       )}
+      {images.length > 0 && (
+        <div className="nodrag mb-1 flex shrink-0 flex-wrap gap-1">
+          {images.map((src, i) => (
+            <span key={i} className="relative">
+              {/* eslint-disable-next-line @next/next/no-img-element -- data URL thumbnail */}
+              <img src={src} alt="attached" className="h-10 border border-neutral-300" />
+              <button
+                className="absolute -top-1 -right-1 h-4 w-4 border border-neutral-300 bg-white leading-none text-neutral-500 hover:text-red-600"
+                onClick={() => setImages((current) => current.filter((_, j) => j !== i))}
+                title="remove image"
+                aria-label="remove image"
+              >
+                ×
+              </button>
+            </span>
+          ))}
+        </div>
+      )}
       <div
         ref={ref}
-        className="nodrag nowheel h-full w-full cursor-text overflow-y-auto whitespace-pre-wrap break-words outline-none"
+        className="nodrag nowheel min-h-0 w-full flex-1 cursor-text overflow-y-auto whitespace-pre-wrap break-words outline-none"
         contentEditable
         data-placeholder={placeholder}
         spellCheck={false}
@@ -175,8 +210,14 @@ export default function MentionInput({
         onKeyDown={onKeyDown}
         onBlur={() => setQuery(null)}
         onPaste={(event) => {
-          // Keep the input plaintext — pasted HTML would otherwise land as markup.
+          // Screenshots arrive as clipboard files; everything else stays plaintext,
+          // since pasted HTML would otherwise land as markup.
           event.preventDefault();
+          const files = [...event.clipboardData.files].filter(isImageFile);
+          if (files.length) {
+            void addImages(files);
+            return;
+          }
           document.execCommand("insertText", false, event.clipboardData.getData("text/plain"));
         }}
       />

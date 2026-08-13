@@ -10,7 +10,7 @@ const SYSTEM_PROMPT = [
   "You may use third-party libraries via script tags or ES module imports from jsdelivr/unpkg/esm.sh; always pin major versions.",
   "Use write_document for the first version or large rewrites, and edit_document for targeted changes — prefer edits, they are much faster. To go back to a saved version, use restore_version; never rewrite an old version by hand.",
   "After changing the document, call check_render once and fix any errors it reports.",
-  "The current state of the document is provided below; user messages may include <referenced-node> blocks containing HTML from the user's other prototypes to draw from.",
+  "The current state of the document is provided below; user messages may include <referenced-node> blocks containing HTML from the user's other prototypes to draw from, and attached images such as screenshots or mockups to match.",
   "When you are done, reply with a one or two sentence summary of what changed. Never include the document itself in your reply.",
   "Keep documents lean: build exactly what was asked, favor compact markup, and skip filler copy, decorative sections, and features nobody requested.",
 ].join(" ");
@@ -21,7 +21,7 @@ const NO_TOOLS_PROMPT = [
   "Tailwind CSS is already injected into every document, so use Tailwind utility classes freely and never add the Tailwind script yourself.",
   "You may use third-party libraries via script tags or ES module imports from jsdelivr/unpkg/esm.sh; always pin major versions.",
   "The document renders directly in a sandboxed iframe.",
-  "User messages may include <referenced-node> blocks containing HTML from the user's other prototypes to draw from.",
+  "User messages may include <referenced-node> blocks containing HTML from the user's other prototypes to draw from, and attached images such as screenshots or mockups to match.",
   "Keep documents lean: build exactly what was asked, favor compact markup, and skip filler copy, decorative sections, and features nobody requested.",
   "Output raw HTML only. No markdown fences, no commentary.",
 ].join(" ");

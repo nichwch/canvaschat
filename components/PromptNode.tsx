@@ -133,10 +133,14 @@ function PromptNode({ id, data, width, height, selected }: NodeProps<PromptFlowN
     return previewHtml ? withTailwind(previewHtml) : null;
   }, [tab, previewMarkdown, previewHtml]);
 
-  async function send(prompt: string) {
+  async function send(prompt: string, images: string[]) {
     if (data.loading) return;
 
-    const userMessage: ChatMessage = { role: "user", content: prompt };
+    const userMessage: ChatMessage = {
+      role: "user",
+      content: prompt,
+      ...(images.length ? { images } : {}),
+    };
     const baseMessages: ChatMessage[] = [...data.messages, userMessage];
     updateNodeData(id, {
       messages: baseMessages,
@@ -166,7 +170,11 @@ function PromptNode({ id, data, width, height, selected }: NodeProps<PromptFlowN
     const context = buildMentionContext(prompt, mentionTargets);
     const apiMessages: ChatMessage[] = [
       ...priorMessages,
-      { role: "user", content: context ? `${prompt}\n\n${context}` : prompt },
+      {
+        role: "user",
+        content: context ? `${prompt}\n\n${context}` : prompt,
+        ...(images.length ? { images } : {}),
+      },
     ];
 
     try {
@@ -427,6 +435,19 @@ function PromptNode({ id, data, width, height, selected }: NodeProps<PromptFlowN
                         if (m.role === "user") {
                           return (
                             <p key={i} className="m-2 whitespace-pre-wrap">
+                              {m.images && m.images.length > 0 && (
+                                <span className="mb-1 flex flex-wrap gap-1">
+                                  {m.images.map((src, k) => (
+                                    // eslint-disable-next-line @next/next/no-img-element -- data URL thumbnail
+                                    <img
+                                      key={k}
+                                      src={src}
+                                      alt="attached"
+                                      className="max-h-16 border border-neutral-200"
+                                    />
+                                  ))}
+                                </span>
+                              )}
                               {splitMentions(m.content, mentionNames).map((part, j) =>
                                 part.type === "text" ? (
                                   <span key={j}>{part.value}</span>
