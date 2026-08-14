@@ -1,7 +1,8 @@
 /**
  * A curated slice of the OpenRouter catalogue for the node model picker.
- * Slugs must match https://openrouter.ai/api/v1/models exactly. Anything not
- * listed here is still reachable through the picker's "custom…" option.
+ * Slugs must match https://openrouter.ai/api/v1/models exactly, and every
+ * entry must accept image input, since chat supports attached screenshots.
+ * Anything else is still reachable through the picker's "custom…" option.
  */
 export type ModelGroup = {
   label: string;
@@ -34,7 +35,6 @@ export const MODEL_GROUPS: ModelGroup[] = [
     models: [
       { id: "moonshotai/kimi-k3", label: "kimi k3" },
       { id: "moonshotai/kimi-k2.7-code", label: "kimi k2.7 code" },
-      { id: "moonshotai/kimi-k2-thinking", label: "kimi k2 thinking" },
     ],
   },
   {
@@ -54,12 +54,7 @@ export const MODEL_GROUPS: ModelGroup[] = [
   {
     label: "open weights",
     models: [
-      { id: "deepseek/deepseek-v4-pro", label: "deepseek v4 pro" },
-      { id: "deepseek/deepseek-v4-flash", label: "deepseek v4 flash" },
-      { id: "z-ai/glm-5.2", label: "glm 5.2" },
       { id: "minimax/minimax-m3", label: "minimax m3" },
-      { id: "qwen/qwen3-235b-a22b-2507", label: "qwen3 235b" },
-      { id: "openai/gpt-oss-120b", label: "gpt-oss 120b" },
       { id: "meta-llama/llama-4-maverick", label: "llama 4 maverick" },
       { id: "mistralai/mistral-large-2512", label: "mistral large" },
     ],

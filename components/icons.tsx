@@ -38,6 +38,15 @@ export function SidebarIcon({ className, collapsed }: IconProps & { collapsed?: 
   );
 }
 
+/** octicon: file-directory */
+export function FolderIcon({ className }: IconProps) {
+  return (
+    <svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor" className={className} aria-hidden>
+      <path d="M1.75 1A1.75 1.75 0 0 0 0 2.75v10.5C0 14.216.784 15 1.75 15h12.5A1.75 1.75 0 0 0 16 13.25v-8.5A1.75 1.75 0 0 0 14.25 3H7.5a.25.25 0 0 1-.2-.1l-.9-1.2C6.07 1.26 5.55 1 5 1H1.75Zm0 1.5h3.25a.25.25 0 0 1 .2.1l.9 1.2c.33.44.85.7 1.4.7h6.75a.25.25 0 0 1 .25.25v8.5a.25.25 0 0 1-.25.25H1.75a.25.25 0 0 1-.25-.25V2.75a.25.25 0 0 1 .25-.25Z" />
+    </svg>
+  );
+}
+
 /** octicon: trash */
 export function TrashIcon({ className }: IconProps) {
   return (

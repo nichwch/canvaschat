@@ -10,6 +10,7 @@ import {
   setInstructions,
 } from "@/lib/storage";
 import type { ExportLayout } from "@/lib/types";
+import FolderSettings from "./FolderSettings";
 import { DownloadIcon } from "./icons";
 
 /** Minimal shape of the File System Access API bit we use; not in the default TS lib. */
@@ -37,6 +38,7 @@ export default function SettingsModal({
   onClose,
   buildExport,
   onKeyChange,
+  onCanvasesChanged,
 }: {
   /** Omitted on the home page, where no single canvas is in scope. */
   canvasId?: string;
@@ -45,6 +47,11 @@ export default function SettingsModal({
   /** Omitted on the home page. Returns the file to offer, it does not download it. */
   buildExport?: (layout: ExportLayout) => { filename: string; html: string };
   onKeyChange?: (key: string) => void;
+  /**
+   * Passed only from the home page, which is where folders are managed and the
+   * only place that can re-read the list after one is opened.
+   */
+  onCanvasesChanged?: () => void;
 }) {
   const [key, setKey] = useState(getApiKey);
   const [instructions, setInstructionsState] = useState(() =>
@@ -166,6 +173,8 @@ export default function SettingsModal({
             </a>
           </p>
         </div>
+
+        {onCanvasesChanged && <FolderSettings onCanvasesChanged={onCanvasesChanged} />}
 
         {canvasId && (
           <div className="border-b border-neutral-200 p-3">

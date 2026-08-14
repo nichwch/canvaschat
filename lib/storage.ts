@@ -13,6 +13,31 @@ const LEGACY_NODES_KEY = "proto:canvas";
 const nodesKey = (canvasId: string) => `proto:canvas:${canvasId}:nodes`;
 const instructionsKey = (canvasId: string) => `proto:canvas:${canvasId}:instructions`;
 
+/** A whole canvas in one object — what a folder-backed browser writes per file. */
+export type CanvasFile = CanvasMeta & {
+  instructions: string;
+  nodes: StoredNode[];
+};
+
+/**
+ * Optional write-through to a local folder. Registered by `lib/folder.ts` when
+ * one is connected; localStorage stays the synchronous store either way.
+ *
+ * Only canvases pass through here. The openrouter api key lives under the same
+ * `proto:` prefix and must never be mirrored, which is why this takes canvas
+ * ids rather than storage keys.
+ */
+export type Mirror = {
+  write: (canvasId: string) => void;
+  remove: (canvasId: string) => void;
+};
+
+let mirror: Mirror | null = null;
+
+export function setMirror(next: Mirror | null) {
+  mirror = next;
+}
+
 function read<T>(key: string, fallback: T): T {
   try {
     const raw = localStorage.getItem(key);
@@ -65,17 +90,20 @@ export function createCanvas(name = "untitled"): CanvasMeta {
   const now = Date.now();
   const meta: CanvasMeta = { id: crypto.randomUUID(), name, createdAt: now, updatedAt: now };
   writeIndex([meta, ...listCanvases()]);
+  mirror?.write(meta.id);
   return meta;
 }
 
 export function renameCanvas(id: string, name: string) {
   writeIndex(listCanvases().map((c) => (c.id === id ? { ...c, name } : c)));
+  mirror?.write(id);
 }
 
 export function deleteCanvas(id: string) {
   localStorage.removeItem(nodesKey(id));
   localStorage.removeItem(instructionsKey(id));
   writeIndex(listCanvases().filter((c) => c.id !== id));
+  mirror?.remove(id);
 }
 
 /** Copies a canvas and every node on it, under fresh ids. */
@@ -94,6 +122,7 @@ export function forkCanvas(id: string): CanvasMeta | null {
   localStorage.setItem(nodesKey(meta.id), JSON.stringify(nodes));
   localStorage.setItem(instructionsKey(meta.id), getInstructions(id));
   writeIndex([meta, ...listCanvases()]);
+  mirror?.write(meta.id);
   return meta;
 }
 
@@ -104,6 +133,38 @@ export function loadNodes(canvasId: string): StoredNode[] {
 export function saveNodes(canvasId: string, nodes: StoredNode[]) {
   localStorage.setItem(nodesKey(canvasId), JSON.stringify(nodes));
   writeIndex(listCanvases().map((c) => (c.id === canvasId ? { ...c, updatedAt: Date.now() } : c)));
+  mirror?.write(canvasId);
+}
+
+/** The whole canvas as one object, or null if it is not in this browser. */
+export function exportCanvasFile(canvasId: string): CanvasFile | null {
+  const meta = getCanvas(canvasId);
+  if (!meta) return null;
+  return { ...meta, instructions: getInstructions(canvasId), nodes: loadNodes(canvasId) };
+}
+
+/**
+ * Replaces every canvas in this browser with the given set. Used when opening a
+ * folder, where the folder is the copy worth keeping. Settings are untouched.
+ */
+export function importCanvasFiles(files: CanvasFile[]) {
+  for (const existing of listCanvases()) {
+    localStorage.removeItem(nodesKey(existing.id));
+    localStorage.removeItem(instructionsKey(existing.id));
+  }
+
+  const index: CanvasMeta[] = [];
+  for (const file of files) {
+    localStorage.setItem(nodesKey(file.id), JSON.stringify(file.nodes ?? []));
+    localStorage.setItem(instructionsKey(file.id), file.instructions ?? "");
+    index.push({
+      id: file.id,
+      name: file.name,
+      createdAt: file.createdAt,
+      updatedAt: file.updatedAt,
+    });
+  }
+  writeIndex(index);
 }
 
 /* Settings. The api key and export layout are global; instructions are per canvas. */
@@ -122,6 +183,7 @@ export function getInstructions(canvasId: string): string {
 
 export function setInstructions(canvasId: string, instructions: string) {
   localStorage.setItem(instructionsKey(canvasId), instructions);
+  mirror?.write(canvasId);
 }
 
 export function getExportLayout(): ExportLayout {

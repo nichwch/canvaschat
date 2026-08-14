@@ -1,8 +1,9 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { restoreFolder } from "@/lib/folder";
 import { createCanvas, deleteCanvas, forkCanvas, listCanvases, loadNodes } from "@/lib/storage";
 import type { CanvasMeta } from "@/lib/types";
 import SettingsModal from "./SettingsModal";
@@ -27,6 +28,16 @@ export default function CanvasList() {
   const [canvases, setCanvases] = useState<Entry[]>(read);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const router = useRouter();
+
+  // A connected folder is the copy that travels between machines, so what it
+  // holds replaces this browser's canvases on the way in.
+  useEffect(() => {
+    restoreFolder()
+      .then((connected) => {
+        if (connected) setCanvases(read());
+      })
+      .catch(() => {});
+  }, []);
 
   function create() {
     const meta = createCanvas();
@@ -102,7 +113,12 @@ export default function CanvasList() {
         </div>
       )}
 
-      {settingsOpen && <SettingsModal onClose={() => setSettingsOpen(false)} />}
+      {settingsOpen && (
+        <SettingsModal
+          onClose={() => setSettingsOpen(false)}
+          onCanvasesChanged={() => setCanvases(read())}
+        />
+      )}
     </div>
   );
 }
