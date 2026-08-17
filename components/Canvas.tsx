@@ -15,6 +15,7 @@ import {
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import PromptNode, { type PromptFlowNode } from "./PromptNode";
+import NodePanel from "./NodePanel";
 import SettingsModal from "./SettingsModal";
 import { CanvasIdProvider } from "./CanvasContext";
 import { ForkIcon, GearIcon } from "./icons";
@@ -193,6 +194,7 @@ function CanvasInner({ canvasId, name }: { canvasId: string; name: string }) {
         onAdd={addNode}
         onOpenSettings={() => setSettingsOpen(true)}
       />
+      <NodePanel nodes={nodes} />
       <ReactFlow
         nodes={nodes}
         onNodesChange={onNodesChange}
