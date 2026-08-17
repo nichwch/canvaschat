@@ -1,18 +1,46 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { DEFAULT_NODE_HEIGHT, DEFAULT_NODE_WIDTH } from "@/lib/types";
+import {
+  DEFAULT_NODE_HEIGHT,
+  DEFAULT_NODE_WIDTH,
+  type NodeTab,
+  type WireframeElement,
+} from "@/lib/types";
 import { withTailwind } from "@/lib/preview";
+import { markdownDocument } from "@/lib/markdown";
+import { wireframeToDataUrl } from "@/lib/wireframe";
 import { MENTION_CHIP_CLASS } from "./MentionInput";
 
 const CARD_WIDTH = 240;
 const CARD_GAP = 6;
 const EDGE_PADDING = 8;
 
+export type MentionTarget = {
+  tab: NodeTab;
+  html: string | null;
+  markdown: string | null;
+  drawing: string | null;
+  wireframe: WireframeElement[];
+  photo: string | null;
+  width: number;
+  height: number;
+};
+
+const EMPTY_NOTES: Record<NodeTab, string> = {
+  chat: "nothing rendered yet",
+  html: "nothing rendered yet",
+  md: "nothing written yet",
+  draw: "nothing drawn yet",
+  wire: "empty wireframe",
+  photo: "no photo yet",
+};
+
 /**
- * An @mention in the transcript. Hovering shows a live mini render of the
- * mentioned node; clicking pans the canvas to it. The card renders through a
+ * An @mention in the transcript. Hovering shows the mentioned node's current
+ * output — rendered document, markdown, sketch, wireframe, or photo, per its
+ * selected tab; clicking pans the canvas to it. The card renders through a
  * portal in screen coordinates — inside the node it would be clipped by the
  * transcript's scroll container and scaled by the canvas zoom.
  */
@@ -23,11 +51,17 @@ export default function MentionChip({
 }: {
   name: string;
   /** null when the mentioned node has been deleted or renamed. */
-  target: { html: string | null; width: number; height: number } | null;
+  target: MentionTarget | null;
   onJump: () => void;
 }) {
   const chipRef = useRef<HTMLButtonElement>(null);
   const [anchor, setAnchor] = useState<DOMRect | null>(null);
+
+  // Rasterized lazily — only while a card for a wire-tab node is showing.
+  const wireframeUrl = useMemo(
+    () => (anchor && target?.tab === "wire" ? wireframeToDataUrl(target.wireframe) : null),
+    [anchor, target]
+  );
 
   if (!target) {
     return (
@@ -56,6 +90,35 @@ export default function MentionChip({
       }
     : null;
 
+  function cardContent() {
+    if (!target) return null;
+    const image =
+      target.tab === "draw" ? target.drawing : target.tab === "photo" ? target.photo : wireframeUrl;
+    if (target.tab === "draw" || target.tab === "wire" || target.tab === "photo") {
+      return image ? (
+        // eslint-disable-next-line @next/next/no-img-element -- data URL preview
+        <img src={image} alt={`@${name} preview`} className="h-full w-full bg-white object-contain" />
+      ) : null;
+    }
+    const doc =
+      target.tab === "md"
+        ? target.markdown?.trim()
+          ? markdownDocument(target.markdown)
+          : null
+        : target.html
+          ? withTailwind(target.html)
+          : null;
+    return doc ? (
+      <iframe
+        className="origin-top-left border-0"
+        style={{ width, height, transform: `scale(${scale})` }}
+        sandbox="allow-scripts"
+        srcDoc={doc}
+        title={`@${name} preview`}
+      />
+    ) : null;
+  }
+
   return (
     <>
       <button
@@ -74,17 +137,9 @@ export default function MentionChip({
             className="pointer-events-none fixed z-50 overflow-hidden border border-neutral-300 bg-white shadow-sm"
             style={{ left: card.left, top: card.top, width: CARD_WIDTH, height: cardHeight }}
           >
-            {target.html ? (
-              <iframe
-                className="origin-top-left border-0"
-                style={{ width, height, transform: `scale(${scale})` }}
-                sandbox="allow-scripts"
-                srcDoc={withTailwind(target.html)}
-                title={`@${name} preview`}
-              />
-            ) : (
+            {cardContent() ?? (
               <div className="flex h-full items-center justify-center text-neutral-400">
-                nothing rendered yet
+                {EMPTY_NOTES[target.tab]}
               </div>
             )}
           </div>,

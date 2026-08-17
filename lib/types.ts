@@ -35,14 +35,45 @@ export type RunUsage = {
   steps: number;
 };
 
-/** Which editor a node's sidebar is showing, and so what its preview renders. */
-export type NodeTab = "chat" | "html" | "md";
+/**
+ * Which editor a node's sidebar is showing, and so what its main panel
+ * renders. The selected tab is also the node's output: @-mentioning a node
+ * from another chat sends whatever its current tab holds.
+ */
+export type NodeTab = "chat" | "html" | "md" | "draw" | "wire" | "photo";
+
+export type WireframeKind =
+  | "box"
+  | "ellipse"
+  | "line"
+  | "arrow"
+  | "text"
+  | "button"
+  | "input"
+  | "image";
+
+export type WireframeElement = {
+  id: string;
+  kind: WireframeKind;
+  /** Top-left corner for shapes; the start point for line/arrow. */
+  x: number;
+  y: number;
+  /** Size for shapes; the delta to the end point (may be negative) for line/arrow. */
+  w: number;
+  h: number;
+  label?: string;
+};
 
 export type PromptNodeData = {
   model: string;
   messages: ChatMessage[];
   html: string | null;
   markdown?: string | null;
+  /** Hand-drawn sketch from the draw tab, as a PNG data URL. */
+  drawing?: string | null;
+  wireframe?: WireframeElement[];
+  /** Uploaded reference photo from the photo tab, as a data URL. */
+  photo?: string | null;
   /** Referenced from other nodes' chats as @name. */
   name?: string;
   versions?: DocVersion[];
@@ -87,6 +118,10 @@ export const MIN_SIDEBAR_WIDTH = 160;
 
 export const DEFAULT_CHAT_INPUT_HEIGHT = 80;
 export const MIN_CHAT_INPUT_HEIGHT = 48;
+
+/** Logical size of the draw and wire surfaces; both scale to fit their panel. */
+export const SKETCH_WIDTH = 1024;
+export const SKETCH_HEIGHT = 768;
 
 export const MAX_VERSIONS = 20;
 export const MAX_AGENT_STEPS = 10;
