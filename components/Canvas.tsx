@@ -20,6 +20,7 @@ import SettingsModal from "./SettingsModal";
 import { CanvasIdProvider } from "./CanvasContext";
 import { ForkIcon, GearIcon } from "./icons";
 import { forkCanvas, getApiKey, getCanvas, loadNodes, renameCanvas, saveNodes } from "@/lib/storage";
+import { defaultNodeName } from "@/lib/nodeNames";
 import { exportCanvas, filenameFor } from "@/lib/export";
 import {
   DEFAULT_MODEL,
@@ -170,7 +171,11 @@ function CanvasInner({ canvasId, name }: { canvasId: string; name: string }) {
         height: DEFAULT_NODE_HEIGHT,
         dragHandle: DRAG_HANDLE_SELECTOR,
         selected: true,
-        data: newNodeData(),
+        data: {
+          ...newNodeData(),
+          // New nodes open on chat; switching tabs re-labels default names.
+          name: defaultNodeName("chat", current.map((n) => n.data.name)),
+        },
       },
     ]);
   }, [screenToFlowPosition]);

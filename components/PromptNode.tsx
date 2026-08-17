@@ -42,6 +42,7 @@ import {
 } from "./DrawingPane";
 import { WireframePane, WireframeToolbar, type WireframeTool } from "./WireframePane";
 import { DEFAULT_FONT_SIZE } from "@/lib/wireframe";
+import { defaultNodeName, isDefaultNodeName, matchesTabLabel } from "@/lib/nodeNames";
 import { PhotoPane, PhotoToolbar } from "./PhotoPane";
 
 export type PromptFlowNode = Node<PromptNodeData, "prompt">;
@@ -277,6 +278,20 @@ function PromptNode({ id, data, width, height, selected }: NodeProps<PromptFlowN
     deleteElements({ nodes: [{ id }] });
   }
 
+  // Default names follow the node's type ("wireframe 1", "md 2", …), so a tab
+  // switch re-labels them; a name the user typed themselves is never touched.
+  function selectTab(next: NodeTab) {
+    const current = data.name?.trim() ?? "";
+    if (!isDefaultNodeName(current) || (current && matchesTabLabel(current, next))) {
+      updateNodeData(id, { tab: next });
+      return;
+    }
+    const taken = getNodes()
+      .filter((n) => n.id !== id)
+      .map((n) => n.data.name);
+    updateNodeData(id, { tab: next, name: defaultNodeName(next, taken) });
+  }
+
   function findByName(name: string) {
     return getNodes().find((n) => n.id !== id && n.data.name?.trim() === name);
   }
@@ -450,7 +465,7 @@ function PromptNode({ id, data, width, height, selected }: NodeProps<PromptFlowN
                       className={`nodrag ${
                         tab === name ? "text-neutral-900" : "text-neutral-400 hover:text-neutral-900"
                       }`}
-                      onClick={() => updateNodeData(id, { tab: name })}
+                      onClick={() => selectTab(name)}
                     >
                       {name}
                     </button>
