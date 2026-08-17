@@ -1,9 +1,11 @@
-import type { ChatMessage, PromptNodeData } from "./types";
+import type { ChatMessage, NodeTab, PromptNodeData } from "./types";
 import { wireframeToDataUrl } from "./wireframe";
 
 export type Mentionable = {
   id: string;
   name: string;
+  /** Colors the chip and picks its icon by the node's output type. */
+  tab: NodeTab;
 };
 
 export type MentionPart =

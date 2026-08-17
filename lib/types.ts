@@ -62,6 +62,8 @@ export type WireframeElement = {
   w: number;
   h: number;
   label?: string;
+  /** Text elements only; other labeled kinds render at the default size. */
+  fontSize?: number;
 };
 
 export type PromptNodeData = {

@@ -1,4 +1,4 @@
-import { SKETCH_HEIGHT, SKETCH_WIDTH, type WireframeElement, type WireframeKind } from "./types";
+import type { WireframeElement, WireframeKind } from "./types";
 
 export const WIREFRAME_KINDS: WireframeKind[] = [
   "box",
@@ -15,6 +15,9 @@ export const WIREFRAME_STROKE = "#525252";
 export const WIREFRAME_MUTED = "#a3a3a3";
 export const WIREFRAME_FONT = "16px sans-serif";
 
+export const DEFAULT_FONT_SIZE = 16;
+export const FONT_SIZES = [12, 16, 24, 32, 48];
+
 export function hasLabel(kind: WireframeKind): boolean {
   return kind === "text" || kind === "button" || kind === "input";
 }
@@ -28,13 +31,13 @@ export function defaultLabel(kind: WireframeKind): string | undefined {
 }
 
 /** Used when a click places an element without dragging out a size. */
-export function defaultSize(kind: WireframeKind): { w: number; h: number } {
+export function defaultSize(kind: WireframeKind, fontSize = DEFAULT_FONT_SIZE): { w: number; h: number } {
   switch (kind) {
     case "line":
     case "arrow":
       return { w: 120, h: 0 };
     case "text":
-      return { w: 120, h: 24 };
+      return { w: Math.max(120, fontSize * 6), h: Math.round(fontSize * 1.5) };
     case "button":
       return { w: 96, h: 32 };
     case "input":
@@ -42,6 +45,34 @@ export function defaultSize(kind: WireframeKind): { w: number; h: number } {
     default:
       return { w: 120, h: 80 };
   }
+}
+
+/** Rough width a text label paints at, so bounds cover overflow past the box. */
+function labelExtent(el: WireframeElement): { w: number; h: number } {
+  const fontSize = el.fontSize ?? DEFAULT_FONT_SIZE;
+  return {
+    w: Math.max(el.w, (el.label ?? "").length * fontSize * 0.62),
+    h: Math.max(el.h, fontSize * 1.4),
+  };
+}
+
+/** Normalized bounds of all elements; the canvas is infinite so nothing clamps this. */
+export function wireframeBounds(
+  elements: WireframeElement[]
+): { x: number; y: number; w: number; h: number } | null {
+  if (!elements.length) return null;
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  for (const el of elements) {
+    const { w, h } = el.kind === "text" ? labelExtent(el) : el;
+    minX = Math.min(minX, el.x, el.x + w);
+    minY = Math.min(minY, el.y, el.y + h);
+    maxX = Math.max(maxX, el.x, el.x + w);
+    maxY = Math.max(maxY, el.y, el.y + h);
+  }
+  return { x: minX, y: minY, w: maxX - minX, h: maxY - minY };
 }
 
 function drawArrowHead(ctx: CanvasRenderingContext2D, x: number, y: number, angle: number) {
@@ -76,7 +107,9 @@ function drawElement(ctx: CanvasRenderingContext2D, el: WireframeElement) {
     case "text":
       ctx.fillStyle = WIREFRAME_STROKE;
       ctx.textAlign = "left";
-      ctx.fillText(el.label ?? "text", x, y + h / 2);
+      ctx.font = `${el.fontSize ?? DEFAULT_FONT_SIZE}px sans-serif`;
+      ctx.fillText(el.label || "text", x, y + h / 2);
+      ctx.font = WIREFRAME_FONT;
       return;
     case "button":
       ctx.beginPath();
@@ -104,18 +137,31 @@ function drawElement(ctx: CanvasRenderingContext2D, el: WireframeElement) {
   }
 }
 
+const RASTER_PADDING = 32;
+const MAX_RASTER_WIDTH = 1600;
+const MAX_RASTER_HEIGHT = 1200;
+
 /**
  * Rasterizes a wireframe to a PNG data URL, matching the SVG editor's look.
- * This is what gets attached to a chat when a wire-tab node is @-mentioned.
+ * The canvas is infinite, so the image covers the elements' bounds plus
+ * padding, downscaled to a size a model can take as an attachment. This is
+ * what gets attached to a chat when a wire-tab node is @-mentioned.
  */
 export function wireframeToDataUrl(elements: WireframeElement[]): string | null {
-  if (!elements.length) return null;
+  const bounds = wireframeBounds(elements);
+  if (!bounds) return null;
+  const width = bounds.w + RASTER_PADDING * 2;
+  const height = bounds.h + RASTER_PADDING * 2;
+  const scale = Math.min(1, MAX_RASTER_WIDTH / width, MAX_RASTER_HEIGHT / height);
+
   const canvas = document.createElement("canvas");
-  canvas.width = SKETCH_WIDTH;
-  canvas.height = SKETCH_HEIGHT;
+  canvas.width = Math.max(1, Math.round(width * scale));
+  canvas.height = Math.max(1, Math.round(height * scale));
   const ctx = canvas.getContext("2d")!;
   ctx.fillStyle = "#fff";
-  ctx.fillRect(0, 0, SKETCH_WIDTH, SKETCH_HEIGHT);
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.scale(scale, scale);
+  ctx.translate(RASTER_PADDING - bounds.x, RASTER_PADDING - bounds.y);
   ctx.strokeStyle = WIREFRAME_STROKE;
   ctx.lineWidth = 2;
   ctx.font = WIREFRAME_FONT;

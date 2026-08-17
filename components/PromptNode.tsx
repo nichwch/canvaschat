@@ -41,6 +41,7 @@ import {
   type DrawingSettings,
 } from "./DrawingPane";
 import { WireframePane, WireframeToolbar, type WireframeTool } from "./WireframePane";
+import { DEFAULT_FONT_SIZE } from "@/lib/wireframe";
 import { PhotoPane, PhotoToolbar } from "./PhotoPane";
 
 export type PromptFlowNode = Node<PromptNodeData, "prompt">;
@@ -95,6 +96,7 @@ function PromptNode({ id, data, width, height, selected }: NodeProps<PromptFlowN
   const drawingRef = useRef<DrawingPaneHandle>(null);
   const [wireTool, setWireTool] = useState<WireframeTool>("select");
   const [wireSelection, setWireSelection] = useState<string | null>(null);
+  const [wireFontSize, setWireFontSize] = useState(DEFAULT_FONT_SIZE);
 
   useEffect(() => {
     if (!activity) return;
@@ -104,20 +106,24 @@ function PromptNode({ id, data, width, height, selected }: NodeProps<PromptFlowN
     return () => clearInterval(timer);
   }, [activity]);
 
-  // Other nodes' names, kept reactive via a joined string so renames elsewhere
-  // update this node's chips/autocomplete without re-rendering on every drag.
+  // Other nodes' names and tabs, kept reactive via a joined string so renames
+  // and tab switches elsewhere update this node's chips/autocomplete without
+  // re-rendering on every drag.
   const mentionKey = useStore((s) =>
     s.nodes
-      .map((n) => `${n.id}\u0000${(n.data as PromptNodeData).name?.trim() ?? ""}`)
+      .map((n) => {
+        const nodeData = n.data as PromptNodeData;
+        return `${n.id}\u0000${nodeData.name?.trim() ?? ""}\u0000${nodeData.tab ?? "chat"}`;
+      })
       .join("\u0001")
   );
   const mentionables = useMemo<Mentionable[]>(
     () =>
       mentionKey
         .split("\u0001")
-        .map((pair) => {
-          const [nodeId, name] = pair.split("\u0000");
-          return { id: nodeId, name };
+        .map((entry) => {
+          const [nodeId, name, tab] = entry.split("\u0000");
+          return { id: nodeId, name, tab: tab as NodeTab };
         })
         .filter((m) => m.name && m.id !== id),
     [mentionKey, id]
@@ -588,9 +594,11 @@ function PromptNode({ id, data, width, height, selected }: NodeProps<PromptFlowN
                     elements={data.wireframe ?? []}
                     tool={wireTool}
                     selectedId={wireSelection}
+                    fontSize={wireFontSize}
                     onToolChange={setWireTool}
                     onSelect={setWireSelection}
                     onChange={(wireframe) => updateNodeData(id, { wireframe })}
+                    onFontSizeChange={setWireFontSize}
                   />
                 )}
 
@@ -623,6 +631,7 @@ function PromptNode({ id, data, width, height, selected }: NodeProps<PromptFlowN
                 elements={data.wireframe ?? []}
                 tool={wireTool}
                 selectedId={wireSelection}
+                fontSize={wireFontSize}
                 onToolChange={setWireTool}
                 onSelect={setWireSelection}
                 onChange={(wireframe) => updateNodeData(id, { wireframe })}
