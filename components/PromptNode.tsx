@@ -18,6 +18,7 @@ import {
   MIN_SIDEBAR_WIDTH,
   type ChatMessage,
   type NodeTab,
+  type DrawStroke,
   type PromptNodeData,
   type ReasoningEffort,
 } from "@/lib/types";
@@ -29,7 +30,8 @@ import { useCanvasId } from "./CanvasContext";
 import { useDebouncedValue } from "./useDebouncedValue";
 import { withTailwind } from "@/lib/preview";
 import { markdownDocument } from "@/lib/markdown";
-import { ForkIcon, SidebarIcon, TrashIcon } from "./icons";
+import { EyeClosedIcon, EyeIcon, ForkIcon, SidebarIcon, TrashIcon } from "./icons";
+import { KindIcon, TabIcon, kindTextClass, mentionChipClass, outputKind } from "./nodeKinds";
 import CodeEditor from "./CodeEditor";
 import MentionInput from "./MentionInput";
 import MentionChip from "./MentionChip";
@@ -47,7 +49,24 @@ import { PhotoPane, PhotoToolbar } from "./PhotoPane";
 
 export type PromptFlowNode = Node<PromptNodeData, "prompt">;
 
-const TABS: NodeTab[] = ["chat", "html", "md", "draw", "wire", "photo"];
+/** Stable identity so an undrawn node doesn't remount the draw surface. */
+const EMPTY_STROKES: DrawStroke[] = [];
+
+/**
+ * Tabs in bar order. chat and html share a group because they are two views of
+ * the same output — chat generates the document, html edits it directly.
+ */
+const TAB_GROUPS: NodeTab[][] = [["chat", "html"], ["md"], ["draw"], ["wire"], ["photo"]];
+
+/** Icons carry no label, so the tooltip says what each tab is for. */
+const TAB_TITLES: Record<NodeTab, string> = {
+  chat: "chat — describe what you want and the model builds the html",
+  html: "html — edit the generated document directly",
+  md: "md — write markdown",
+  draw: "draw — sketch by hand",
+  wire: "wire — lay out a wireframe",
+  photo: "photo — upload a reference image",
+};
 
 /** Leaves at least this much room for the preview when dragging the sidebar wider. */
 const MIN_PREVIEW_WIDTH = 120;
@@ -94,6 +113,7 @@ function PromptNode({ id, data, width, height, selected }: NodeProps<PromptFlowN
 
   // Editor session state for the draw and wire tabs; only the artwork persists.
   const [drawSettings, setDrawSettings] = useState<DrawingSettings>(DEFAULT_DRAWING_SETTINGS);
+  const [drawZoom, setDrawZoom] = useState(1);
   const drawingRef = useRef<DrawingPaneHandle>(null);
   const [wireTool, setWireTool] = useState<WireframeTool>("select");
   const [wireSelection, setWireSelection] = useState<string | null>(null);
@@ -134,8 +154,11 @@ function PromptNode({ id, data, width, height, selected }: NodeProps<PromptFlowN
   const sidebarWidth = data.sidebarWidth ?? DEFAULT_SIDEBAR_WIDTH;
   const chatInputHeight = data.chatInputHeight ?? DEFAULT_CHAT_INPUT_HEIGHT;
   const collapsed = data.sidebarCollapsed ?? false;
+  const hidden = data.hidden ?? false;
   // Persisted, so reopening a canvas restores each node to the view it was left on.
   const tab = data.tab ?? "chat";
+  /** This node's own output type, which colors its title chip. */
+  const kind = outputKind(tab);
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ block: "nearest" });
@@ -378,14 +401,24 @@ function PromptNode({ id, data, width, height, selected }: NodeProps<PromptFlowN
           >
             <SidebarIcon collapsed={collapsed} />
           </button>
-          <input
-            className="nodrag w-24 cursor-text outline-none placeholder:text-neutral-300"
-            value={data.name ?? ""}
-            onChange={(e) => updateNodeData(id, { name: e.target.value })}
-            placeholder="name"
-            spellCheck={false}
-            title="node name — reference from other chats as @name"
-          />
+          {/* Styled as its own mention chip, so a node reads the same here and
+              wherever it is referenced. */}
+          <span className={mentionChipClass(kind)}>
+            {/* One flex item, so the chip's gap falls only before the icon. */}
+            <span className="inline-flex items-center">
+              @
+              <input
+                className="nodrag cursor-text bg-transparent outline-none placeholder:opacity-50"
+                style={{ width: `${Math.max((data.name ?? "").length, 4)}ch` }}
+                value={data.name ?? ""}
+                onChange={(e) => updateNodeData(id, { name: e.target.value })}
+                placeholder="name"
+                spellCheck={false}
+                title="node name — reference from other chats as @name"
+              />
+            </span>
+            <KindIcon kind={kind} />
+          </span>
           <select
             className="nodrag cursor-pointer bg-white text-neutral-500 outline-none hover:text-neutral-900"
             value={customModel ? CUSTOM_MODEL : data.model}
@@ -434,6 +467,21 @@ function PromptNode({ id, data, width, height, selected }: NodeProps<PromptFlowN
           </select>
           <span className="flex-1" />
           <button
+            className={`nodrag ${
+              hidden ? "text-neutral-300 hover:text-neutral-500" : "text-neutral-500 hover:text-neutral-900"
+            }`}
+            onClick={() => updateNodeData(id, { hidden: !hidden })}
+            title={
+              hidden
+                ? "hidden — this node is left out of the canvas export"
+                : "visible — this node is included in the canvas export"
+            }
+            aria-label={hidden ? "include in export" : "exclude from export"}
+            aria-pressed={!hidden}
+          >
+            {hidden ? <EyeClosedIcon /> : <EyeIcon />}
+          </button>
+          <button
             className="nodrag text-neutral-500 hover:text-neutral-900"
             onClick={fork}
             title="fork"
@@ -458,17 +506,29 @@ function PromptNode({ id, data, width, height, selected }: NodeProps<PromptFlowN
                 className="flex shrink-0 flex-col border-r border-neutral-200"
                 style={{ width: sidebarWidth }}
               >
-                <div className="flex flex-wrap gap-2 border-b border-neutral-200 p-2">
-                  {TABS.map((name) => (
-                    <button
-                      key={name}
-                      className={`nodrag ${
-                        tab === name ? "text-neutral-900" : "text-neutral-400 hover:text-neutral-900"
-                      }`}
-                      onClick={() => selectTab(name)}
-                    >
-                      {name}
-                    </button>
+                <div className="flex flex-wrap items-center gap-2 border-b border-neutral-200 p-2">
+                  {TAB_GROUPS.map((group) => (
+                    // Buttons within a group touch; the parent gap separates groups.
+                    <div key={group[0]} className="flex">
+                      {group.map((name) => (
+                        <button
+                          key={name}
+                          // The active tab wears its own output color, matching
+                          // the node's title chip and its mentions elsewhere.
+                          className={`nodrag flex h-6 w-6 items-center justify-center border ${
+                            tab === name
+                              ? `border-neutral-300 ${kindTextClass(outputKind(name))}`
+                              : "border-transparent text-neutral-400 hover:text-neutral-900"
+                          }`}
+                          onClick={() => selectTab(name)}
+                          title={TAB_TITLES[name]}
+                          aria-label={name}
+                          aria-pressed={tab === name}
+                        >
+                          <TabIcon tab={name} />
+                        </button>
+                      ))}
+                    </div>
                   ))}
                 </div>
 
@@ -598,9 +658,11 @@ function PromptNode({ id, data, width, height, selected }: NodeProps<PromptFlowN
                 {tab === "draw" && (
                   <DrawingToolbar
                     settings={drawSettings}
+                    zoom={drawZoom}
                     onChange={setDrawSettings}
                     onUndo={() => drawingRef.current?.undo()}
                     onClear={() => drawingRef.current?.clear()}
+                    onFit={() => drawingRef.current?.fit()}
                   />
                 )}
 
@@ -636,9 +698,11 @@ function PromptNode({ id, data, width, height, selected }: NodeProps<PromptFlowN
           <div className="min-w-0 flex-1">
             {tab === "draw" ? (
               <DrawingPane
-                drawing={data.drawing ?? null}
+                strokes={data.strokes ?? EMPTY_STROKES}
+                base={data.drawBase ?? null}
                 settings={drawSettings}
-                onCommit={(drawing) => updateNodeData(id, { drawing })}
+                onCommit={(strokes, drawing) => updateNodeData(id, { strokes, drawing })}
+                onZoomChange={setDrawZoom}
                 handleRef={drawingRef}
               />
             ) : tab === "wire" ? (

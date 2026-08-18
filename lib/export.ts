@@ -92,7 +92,8 @@ export function exportCanvas(
   canvasName: string,
   layout: ExportLayout
 ): string {
-  const exportable = nodes.filter((n) => hasMarkdown(n) || n.data.html);
+  // Nodes toggled off in the header stay out of the exported document.
+  const exportable = nodes.filter((n) => !n.data.hidden && (hasMarkdown(n) || n.data.html));
   const body = exportable.length
     ? layout === "canvas"
       ? canvasBody(exportable)

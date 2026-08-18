@@ -40,7 +40,14 @@ function toFlowNodes(stored: StoredNode[]): PromptFlowNode[] {
     width: n.width ?? DEFAULT_NODE_WIDTH,
     height: n.height ?? DEFAULT_NODE_HEIGHT,
     dragHandle: DRAG_HANDLE_SELECTOR,
-    data: { ...n.data, loading: false, error: null },
+    data: {
+      ...n.data,
+      // Sketches drawn before the surface became infinite become a fixed
+      // backdrop, so nothing already drawn is lost.
+      ...(n.data.drawing && !n.data.strokes ? { drawBase: n.data.drawing } : {}),
+      loading: false,
+      error: null,
+    },
   }));
 }
 
@@ -57,9 +64,12 @@ function toStoredNodes(nodes: PromptFlowNode[]): StoredNode[] {
       html: data.html,
       markdown: data.markdown,
       drawing: data.drawing,
+      strokes: data.strokes,
+      drawBase: data.drawBase,
       wireframe: data.wireframe,
       photo: data.photo,
       name: data.name,
+      hidden: data.hidden,
       versions: data.versions,
       usage: data.usage,
       reasoning: data.reasoning,

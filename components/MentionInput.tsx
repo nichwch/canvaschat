@@ -90,7 +90,7 @@ export default function MentionInput({
     chip.className = mentionChipClass(kind);
     chip.textContent = `@${option.name}`;
     const icon = document.createElement("span");
-    icon.className = "ml-1 inline-flex align-[-1px]";
+    icon.className = "inline-flex";
     icon.innerHTML = kindIconSvg(kind);
     chip.appendChild(icon);
 

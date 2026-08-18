@@ -1,9 +1,19 @@
 "use client";
 
-import { useEffect, useImperativeHandle, useRef, type Ref } from "react";
-import { SKETCH_HEIGHT, SKETCH_WIDTH } from "@/lib/types";
+import { useCallback, useEffect, useImperativeHandle, useRef, useState, type Ref } from "react";
+import type { DrawStroke } from "@/lib/types";
+import {
+  clampDrawZoom,
+  drawingBounds,
+  fitView,
+  paintStroke,
+  paintStrokes,
+  rasterizeDrawing,
+  BASE_RECT,
+  type DrawView,
+} from "@/lib/drawing";
 
-export type DrawingTool = "brush" | "eraser";
+export type DrawingTool = "brush" | "eraser" | "pan";
 
 export type DrawingSettings = {
   color: string;
@@ -14,6 +24,7 @@ export type DrawingSettings = {
 export type DrawingPaneHandle = {
   undo: () => void;
   clear: () => void;
+  fit: () => void;
 };
 
 export const DRAWING_COLORS = [
@@ -38,157 +49,327 @@ export const DEFAULT_DRAWING_SETTINGS: DrawingSettings = {
 
 /** The eraser is just a fat white brush — the surface is flattened onto white. */
 const ERASER_SCALE = 4;
-const MAX_UNDO = 20;
+const MAX_UNDO = 30;
+/** World-space spacing of the backdrop dots, so panning is visible. */
+const GRID_SPACING = 32;
 
-/** Repaints the canvas from a stored data URL (or to blank white for null). */
-function paint(canvas: HTMLCanvasElement | null, src: string | null) {
-  if (!canvas) return;
-  const ctx = canvas.getContext("2d")!;
-  ctx.fillStyle = "#fff";
-  ctx.fillRect(0, 0, SKETCH_WIDTH, SKETCH_HEIGHT);
-  if (!src) return;
-  const img = new Image();
-  img.onload = () => ctx.drawImage(img, 0, 0);
-  img.src = src;
-}
+type Drag =
+  | { mode: "draw"; stroke: DrawStroke }
+  | { mode: "pan"; startX: number; startY: number; originX: number; originY: number };
 
 /**
- * Maps a pointer event to canvas coordinates. The canvas is displayed with
- * object-fit: contain, so the content box must be worked out from the aspect
- * ratio; this also absorbs the React Flow zoom transform.
- */
-function canvasPoint(canvas: HTMLCanvasElement, event: React.PointerEvent) {
-  const rect = canvas.getBoundingClientRect();
-  const scale = Math.min(rect.width / SKETCH_WIDTH, rect.height / SKETCH_HEIGHT);
-  const left = rect.left + (rect.width - SKETCH_WIDTH * scale) / 2;
-  const top = rect.top + (rect.height - SKETCH_HEIGHT * scale) / 2;
-  return { x: (event.clientX - left) / scale, y: (event.clientY - top) / scale };
-}
-
-/**
- * The main-panel drawing surface for a node's draw tab. Strokes commit to the
- * node's `drawing` data URL on pointer-up; undo/clear are driven from the
- * sidebar toolbar through `handleRef`.
+ * The main-panel drawing surface for a node's draw tab: an infinite canvas —
+ * scroll to zoom, middle-drag or hold space to pan, or use the pan tool.
+ * Strokes are stored as vectors in world space and flattened to a PNG on
+ * commit, which is what mentions and previews consume.
  */
 export function DrawingPane({
-  drawing,
+  strokes,
+  base,
   settings,
   onCommit,
+  onZoomChange,
   handleRef,
 }: {
-  drawing: string | null;
+  strokes: DrawStroke[];
+  /** Legacy fixed-canvas sketch, pinned at the origin beneath the strokes. */
+  base: string | null;
   settings: DrawingSettings;
-  onCommit: (drawing: string | null) => void;
+  onCommit: (strokes: DrawStroke[], drawing: string | null) => void;
+  /** Zoom only, so panning doesn't re-render the surrounding node. */
+  onZoomChange: (zoom: number) => void;
   handleRef: Ref<DrawingPaneHandle>;
 }) {
+  const wrapRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  /** The drawing value this pane last wrote or loaded, to detect external changes. */
-  const committedRef = useRef<string | null | undefined>(undefined);
-  const undoRef = useRef<(string | null)[]>([]);
-  const lastPointRef = useRef<{ x: number; y: number } | null>(null);
+  const baseImageRef = useRef<HTMLImageElement | null>(null);
+  const dragRef = useRef<Drag | null>(null);
+  const undoRef = useRef<DrawStroke[][]>([]);
+  const spaceRef = useRef(false);
+  const viewRef = useRef<DrawView>({ x: 0, y: 0, zoom: 1 });
+  const strokesRef = useRef(strokes);
+
+  const [view, setViewState] = useState<DrawView>({ x: 0, y: 0, zoom: 1 });
+  const [panning, setPanning] = useState(false);
+
+  // Mirrors of render state for the imperative paint path and event handlers.
+  // Effects run in order, so this lands before the repaint effect below.
+  useEffect(() => {
+    strokesRef.current = strokes;
+  }, [strokes]);
+
+  const setView = useCallback(
+    (next: DrawView) => {
+      if (next.zoom !== viewRef.current.zoom) onZoomChange(next.zoom);
+      viewRef.current = next;
+      setViewState(next);
+    },
+    [onZoomChange]
+  );
+
+  /** Full repaint: grid, legacy backdrop, every committed stroke. */
+  const redraw = useCallback(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d")!;
+    const dpr = window.devicePixelRatio || 1;
+    const { x, y, zoom } = viewRef.current;
+    const width = canvas.width / dpr;
+    const height = canvas.height / dpr;
+
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.fillStyle = "#fff";
+    ctx.fillRect(0, 0, width, height);
+
+    // Grid dots are drawn in screen space so they stay crisp at any zoom.
+    const step = GRID_SPACING * zoom;
+    if (step >= 6) {
+      ctx.fillStyle = "#e5e5e5";
+      for (let gx = ((x % step) + step) % step; gx < width; gx += step) {
+        for (let gy = ((y % step) + step) % step; gy < height; gy += step) {
+          ctx.fillRect(gx, gy, 1, 1);
+        }
+      }
+    }
+
+    ctx.setTransform(dpr * zoom, 0, 0, dpr * zoom, dpr * x, dpr * y);
+    const baseImage = baseImageRef.current;
+    if (baseImage) {
+      ctx.drawImage(baseImage, BASE_RECT.x, BASE_RECT.y, BASE_RECT.w, BASE_RECT.h);
+    }
+    paintStrokes(ctx, strokesRef.current);
+
+    const drag = dragRef.current;
+    if (drag?.mode === "draw") paintStroke(ctx, drag.stroke);
+  }, []);
+
+  /** Backing store follows the element size and pixel ratio. */
+  const resize = useCallback(() => {
+    const canvas = canvasRef.current;
+    const wrap = wrapRef.current;
+    if (!canvas || !wrap) return;
+    const dpr = window.devicePixelRatio || 1;
+    const width = Math.max(1, Math.round(wrap.clientWidth * dpr));
+    const height = Math.max(1, Math.round(wrap.clientHeight * dpr));
+    if (canvas.width !== width || canvas.height !== height) {
+      canvas.width = width;
+      canvas.height = height;
+    }
+    redraw();
+  }, [redraw]);
 
   useEffect(() => {
-    if (drawing === committedRef.current) return;
-    committedRef.current = drawing;
-    paint(canvasRef.current, drawing);
-  }, [drawing]);
+    const wrap = wrapRef.current;
+    if (!wrap) return;
+    const observer = new ResizeObserver(resize);
+    observer.observe(wrap);
+    resize();
+    return () => observer.disconnect();
+  }, [resize]);
+
+  useEffect(() => {
+    if (!base) {
+      baseImageRef.current = null;
+      redraw();
+      return;
+    }
+    const img = new Image();
+    img.onload = () => {
+      baseImageRef.current = img;
+      redraw();
+    };
+    img.src = base;
+  }, [base, redraw]);
+
+  useEffect(redraw, [strokes, view, redraw]);
+
+  const fit = useCallback(() => {
+    const wrap = wrapRef.current;
+    if (!wrap) return;
+    setView(
+      fitView(
+        drawingBounds(strokesRef.current, Boolean(base)),
+        wrap.clientWidth,
+        wrap.clientHeight
+      )
+    );
+  }, [base, setView]);
+
+  // Open on whatever was drawn before, wherever on the surface it lives.
+  useEffect(() => {
+    fit();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- mount only
+  }, []);
+
+  // Space is the usual hold-to-pan modifier; ignore it while typing elsewhere.
+  useEffect(() => {
+    const typing = (target: EventTarget | null) =>
+      target instanceof HTMLElement &&
+      (target.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName));
+
+    const down = (event: KeyboardEvent) => {
+      if (event.code === "Space" && !typing(event.target)) spaceRef.current = true;
+    };
+    const up = (event: KeyboardEvent) => {
+      if (event.code === "Space") spaceRef.current = false;
+    };
+    window.addEventListener("keydown", down);
+    window.addEventListener("keyup", up);
+    return () => {
+      window.removeEventListener("keydown", down);
+      window.removeEventListener("keyup", up);
+    };
+  }, []);
+
+  async function commit(next: DrawStroke[]) {
+    onCommit(next, await rasterizeDrawing(next, base));
+  }
 
   useImperativeHandle(handleRef, () => ({
     undo() {
       const previous = undoRef.current.pop();
-      if (previous === undefined) return;
-      committedRef.current = previous;
-      paint(canvasRef.current, previous);
-      onCommit(previous);
+      if (!previous) return;
+      void commit(previous);
     },
     clear() {
-      if (committedRef.current === null) return;
-      undoRef.current = [...undoRef.current, committedRef.current ?? null].slice(-MAX_UNDO);
-      committedRef.current = null;
-      paint(canvasRef.current, null);
-      onCommit(null);
+      if (!strokesRef.current.length) return;
+      undoRef.current = [...undoRef.current, strokesRef.current].slice(-MAX_UNDO);
+      void commit([]);
     },
+    fit,
   }));
 
-  function strokeStyle() {
-    const eraser = settings.tool === "eraser";
+  /** Pointer position in canvas pixels, absorbing the React Flow zoom. */
+  function localPoint(event: React.PointerEvent | React.WheelEvent) {
+    const canvas = canvasRef.current!;
+    const rect = canvas.getBoundingClientRect();
     return {
-      color: eraser ? "#fff" : settings.color,
-      width: eraser ? settings.size * ERASER_SCALE : settings.size,
+      x: ((event.clientX - rect.left) / rect.width) * canvas.clientWidth,
+      y: ((event.clientY - rect.top) / rect.height) * canvas.clientHeight,
     };
   }
 
-  function onPointerDown(event: React.PointerEvent) {
-    if (event.button !== 0) return;
-    const canvas = canvasRef.current!;
-    canvas.setPointerCapture(event.pointerId);
-    undoRef.current = [...undoRef.current, committedRef.current ?? null].slice(-MAX_UNDO);
+  function toWorld(point: { x: number; y: number }, current: DrawView) {
+    return { x: (point.x - current.x) / current.zoom, y: (point.y - current.y) / current.zoom };
+  }
 
-    const point = canvasPoint(canvas, event);
-    lastPointRef.current = point;
-    // A dot right away, so single clicks leave a mark.
-    const { color, width } = strokeStyle();
-    const ctx = canvas.getContext("2d")!;
-    ctx.fillStyle = color;
-    ctx.beginPath();
-    ctx.arc(point.x, point.y, width / 2, 0, Math.PI * 2);
-    ctx.fill();
+  function onWheel(event: React.WheelEvent) {
+    const cursor = localPoint(event);
+    const current = viewRef.current;
+    const zoom = clampDrawZoom(current.zoom * Math.exp(-event.deltaY * 0.0015));
+    const world = toWorld(cursor, current);
+    setView({ x: cursor.x - world.x * zoom, y: cursor.y - world.y * zoom, zoom });
+  }
+
+  function onPointerDown(event: React.PointerEvent) {
+    const canvas = canvasRef.current!;
+    const point = localPoint(event);
+    const wantsPan = event.button === 1 || settings.tool === "pan" || spaceRef.current;
+
+    if (wantsPan) {
+      if (event.button !== 0 && event.button !== 1) return;
+      event.preventDefault();
+      canvas.setPointerCapture(event.pointerId);
+      dragRef.current = {
+        mode: "pan",
+        startX: point.x,
+        startY: point.y,
+        originX: viewRef.current.x,
+        originY: viewRef.current.y,
+      };
+      setPanning(true);
+      return;
+    }
+
+    if (event.button !== 0) return;
+    canvas.setPointerCapture(event.pointerId);
+    const world = toWorld(point, viewRef.current);
+    const eraser = settings.tool === "eraser";
+    dragRef.current = {
+      mode: "draw",
+      stroke: {
+        color: eraser ? "#ffffff" : settings.color,
+        width: eraser ? settings.size * ERASER_SCALE : settings.size,
+        points: [round(world.x), round(world.y)],
+      },
+    };
+    redraw();
   }
 
   function onPointerMove(event: React.PointerEvent) {
-    const last = lastPointRef.current;
-    if (!last) return;
-    const canvas = canvasRef.current!;
-    const point = canvasPoint(canvas, event);
-    const { color, width } = strokeStyle();
-    const ctx = canvas.getContext("2d")!;
-    ctx.strokeStyle = color;
-    ctx.lineWidth = width;
-    ctx.lineCap = "round";
-    ctx.lineJoin = "round";
-    ctx.beginPath();
-    ctx.moveTo(last.x, last.y);
-    ctx.lineTo(point.x, point.y);
-    ctx.stroke();
-    lastPointRef.current = point;
+    const drag = dragRef.current;
+    if (!drag) return;
+    const point = localPoint(event);
+
+    if (drag.mode === "pan") {
+      setView({
+        x: drag.originX + (point.x - drag.startX),
+        y: drag.originY + (point.y - drag.startY),
+        zoom: viewRef.current.zoom,
+      });
+      return;
+    }
+
+    const world = toWorld(point, viewRef.current);
+    drag.stroke.points.push(round(world.x), round(world.y));
+    redraw();
   }
 
   function onPointerUp() {
-    if (!lastPointRef.current) return;
-    lastPointRef.current = null;
-    const url = canvasRef.current!.toDataURL("image/png");
-    committedRef.current = url;
-    onCommit(url);
+    const drag = dragRef.current;
+    dragRef.current = null;
+    setPanning(false);
+    if (drag?.mode !== "draw") return;
+
+    undoRef.current = [...undoRef.current, strokesRef.current].slice(-MAX_UNDO);
+    void commit([...strokesRef.current, drag.stroke]);
   }
 
+  const cursor = panning
+    ? "cursor-grabbing"
+    : settings.tool === "pan"
+      ? "cursor-grab"
+      : "cursor-crosshair";
+
   return (
-    <div className="h-full w-full bg-neutral-100">
+    <div ref={wrapRef} className="relative h-full w-full overflow-hidden bg-white">
       <canvas
         ref={canvasRef}
-        width={SKETCH_WIDTH}
-        height={SKETCH_HEIGHT}
-        className="nodrag h-full w-full cursor-crosshair touch-none"
-        style={{ objectFit: "contain" }}
+        className={`nodrag nowheel h-full w-full touch-none ${cursor}`}
+        onWheel={onWheel}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
         onPointerCancel={onPointerUp}
+        onContextMenu={(e) => e.preventDefault()}
       />
+      <p className="pointer-events-none absolute right-2 bottom-1 text-neutral-300">
+        scroll to zoom · space or middle-drag to pan
+      </p>
     </div>
   );
 }
 
-/** The sidebar for the draw tab: color, brush size, brush/eraser, undo/clear. */
+/** Sub-pixel precision is invisible here and doubles the stored size. */
+function round(value: number): number {
+  return Math.round(value * 10) / 10;
+}
+
+/** The sidebar for the draw tab: color, brush size, tool, undo/clear/fit. */
 export function DrawingToolbar({
   settings,
+  zoom,
   onChange,
   onUndo,
   onClear,
+  onFit,
 }: {
   settings: DrawingSettings;
+  zoom: number;
   onChange: (settings: DrawingSettings) => void;
   onUndo: () => void;
   onClear: () => void;
+  onFit: () => void;
 }) {
   return (
     <div className="nodrag nowheel min-h-0 flex-1 cursor-auto space-y-4 overflow-y-auto p-3">
@@ -234,7 +415,7 @@ export function DrawingToolbar({
       <div>
         <p className="mb-1 text-neutral-400">tool</p>
         <div className="flex gap-1">
-          {(["brush", "eraser"] as const).map((tool) => (
+          {(["brush", "eraser", "pan"] as const).map((tool) => (
             <button
               key={tool}
               className={`border px-2 py-0.5 ${
@@ -247,6 +428,15 @@ export function DrawingToolbar({
               {tool}
             </button>
           ))}
+        </div>
+      </div>
+      <div>
+        <p className="mb-1 text-neutral-400">view</p>
+        <div className="flex items-baseline gap-3">
+          <button className="text-neutral-500 underline hover:text-neutral-900" onClick={onFit}>
+            fit
+          </button>
+          <span className="text-neutral-400">{Math.round(zoom * 100)}%</span>
         </div>
       </div>
       <div className="flex gap-3">

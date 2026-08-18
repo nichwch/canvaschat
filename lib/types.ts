@@ -66,18 +66,34 @@ export type WireframeElement = {
   fontSize?: number;
 };
 
+/** One freehand stroke on the infinite draw surface, in world coordinates. */
+export type DrawStroke = {
+  color: string;
+  width: number;
+  /** Flat [x0, y0, x1, y1, …] — compact, since these live in localStorage. */
+  points: number[];
+};
+
 export type PromptNodeData = {
   model: string;
   messages: ChatMessage[];
   html: string | null;
   markdown?: string | null;
-  /** Hand-drawn sketch from the draw tab, as a PNG data URL. */
+  /** Hand-drawn sketch from the draw tab, rasterized to a PNG data URL. */
   drawing?: string | null;
+  strokes?: DrawStroke[];
+  /**
+   * A sketch made before the draw surface became infinite, kept as a fixed
+   * backdrop at the origin so nothing drawn back then is lost.
+   */
+  drawBase?: string | null;
   wireframe?: WireframeElement[];
   /** Uploaded reference photo from the photo tab, as a data URL. */
   photo?: string | null;
   /** Referenced from other nodes' chats as @name. */
   name?: string;
+  /** Nodes are exported unless this is set; scratch work can stay off the page. */
+  hidden?: boolean;
   versions?: DocVersion[];
   usage?: RunUsage;
   reasoning?: ReasoningEffort;
@@ -121,7 +137,7 @@ export const MIN_SIDEBAR_WIDTH = 160;
 export const DEFAULT_CHAT_INPUT_HEIGHT = 80;
 export const MIN_CHAT_INPUT_HEIGHT = 48;
 
-/** Logical size of the draw and wire surfaces; both scale to fit their panel. */
+/** Size of a legacy fixed-canvas sketch, and the framing for a fresh draw view. */
 export const SKETCH_WIDTH = 1024;
 export const SKETCH_HEIGHT = 768;
 

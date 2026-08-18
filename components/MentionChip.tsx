@@ -69,7 +69,7 @@ export default function MentionChip({
         title="jump to node"
       >
         @{name}
-        <KindIcon kind={kind} className="ml-1" />
+        <KindIcon kind={kind} />
       </button>
       {card &&
         createPortal(
