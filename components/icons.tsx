@@ -1,3 +1,5 @@
+import type { ReactNode } from "react";
+
 type IconProps = { className?: string };
 
 /** octicon: repo-forked */
@@ -44,6 +46,104 @@ export function FolderIcon({ className }: IconProps) {
     <svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor" className={className} aria-hidden>
       <path d="M1.75 1A1.75 1.75 0 0 0 0 2.75v10.5C0 14.216.784 15 1.75 15h12.5A1.75 1.75 0 0 0 16 13.25v-8.5A1.75 1.75 0 0 0 14.25 3H7.5a.25.25 0 0 1-.2-.1l-.9-1.2C6.07 1.26 5.55 1 5 1H1.75Zm0 1.5h3.25a.25.25 0 0 1 .2.1l.9 1.2c.33.44.85.7 1.4.7h6.75a.25.25 0 0 1 .25.25v8.5a.25.25 0 0 1-.25.25H1.75a.25.25 0 0 1-.25-.25V2.75a.25.25 0 0 1 .25-.25Z" />
     </svg>
+  );
+}
+
+type StrokeIconProps = IconProps & { children: ReactNode };
+
+/** Shared frame for the hand-drawn wireframe tool icons. */
+function StrokeIcon({ className, children }: StrokeIconProps) {
+  return (
+    <svg
+      viewBox="0 0 16 16"
+      width="14"
+      height="14"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+      aria-hidden
+    >
+      {children}
+    </svg>
+  );
+}
+
+export function SelectToolIcon({ className }: IconProps) {
+  return (
+    <svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor" className={className} aria-hidden>
+      <path d="M3.5 1.5 12.5 9l-4.4.5 2.4 4.1-1.8 1-2.3-4.2-2.9 2.8Z" />
+    </svg>
+  );
+}
+
+export function BoxToolIcon({ className }: IconProps) {
+  return (
+    <StrokeIcon className={className}>
+      <rect x="2.5" y="3.5" width="11" height="9" />
+    </StrokeIcon>
+  );
+}
+
+export function EllipseToolIcon({ className }: IconProps) {
+  return (
+    <StrokeIcon className={className}>
+      <ellipse cx="8" cy="8" rx="5.5" ry="4.5" />
+    </StrokeIcon>
+  );
+}
+
+export function LineToolIcon({ className }: IconProps) {
+  return (
+    <StrokeIcon className={className}>
+      <path d="M3 13 13 3" />
+    </StrokeIcon>
+  );
+}
+
+export function ArrowToolIcon({ className }: IconProps) {
+  return (
+    <StrokeIcon className={className}>
+      <path d="M3 13 13 3" />
+      <path d="M7.5 3H13v5.5" />
+    </StrokeIcon>
+  );
+}
+
+export function TextToolIcon({ className }: IconProps) {
+  return (
+    <StrokeIcon className={className}>
+      <path d="M3.5 3.5h9" />
+      <path d="M8 3.5v9" />
+    </StrokeIcon>
+  );
+}
+
+export function ButtonToolIcon({ className }: IconProps) {
+  return (
+    <StrokeIcon className={className}>
+      <rect x="1.5" y="5" width="13" height="6" rx="3" />
+    </StrokeIcon>
+  );
+}
+
+export function InputToolIcon({ className }: IconProps) {
+  return (
+    <StrokeIcon className={className}>
+      <rect x="1.5" y="5" width="13" height="6" />
+      <path d="M4.5 7v2" />
+    </StrokeIcon>
+  );
+}
+
+export function ImageToolIcon({ className }: IconProps) {
+  return (
+    <StrokeIcon className={className}>
+      <rect x="2.5" y="2.5" width="11" height="11" />
+      <path d="m2.5 2.5 11 11M13.5 2.5l-11 11" />
+    </StrokeIcon>
   );
 }
 

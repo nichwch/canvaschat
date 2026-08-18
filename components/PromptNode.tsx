@@ -33,10 +33,21 @@ import { ForkIcon, SidebarIcon, TrashIcon } from "./icons";
 import CodeEditor from "./CodeEditor";
 import MentionInput from "./MentionInput";
 import MentionChip from "./MentionChip";
+import {
+  DEFAULT_DRAWING_SETTINGS,
+  DrawingPane,
+  DrawingToolbar,
+  type DrawingPaneHandle,
+  type DrawingSettings,
+} from "./DrawingPane";
+import { WireframePane, WireframeToolbar, type WireframeTool } from "./WireframePane";
+import { DEFAULT_FONT_SIZE } from "@/lib/wireframe";
+import { defaultNodeName, isDefaultNodeName, matchesTabLabel } from "@/lib/nodeNames";
+import { PhotoPane, PhotoToolbar } from "./PhotoPane";
 
 export type PromptFlowNode = Node<PromptNodeData, "prompt">;
 
-const TABS: NodeTab[] = ["chat", "html", "md"];
+const TABS: NodeTab[] = ["chat", "html", "md", "draw", "wire", "photo"];
 
 /** Leaves at least this much room for the preview when dragging the sidebar wider. */
 const MIN_PREVIEW_WIDTH = 120;
@@ -81,6 +92,13 @@ function PromptNode({ id, data, width, height, selected }: NodeProps<PromptFlowN
   const [activity, setActivity] = useState<{ startedAt: number; tool: string | null } | null>(null);
   const [elapsed, setElapsed] = useState(0);
 
+  // Editor session state for the draw and wire tabs; only the artwork persists.
+  const [drawSettings, setDrawSettings] = useState<DrawingSettings>(DEFAULT_DRAWING_SETTINGS);
+  const drawingRef = useRef<DrawingPaneHandle>(null);
+  const [wireTool, setWireTool] = useState<WireframeTool>("select");
+  const [wireSelection, setWireSelection] = useState<string | null>(null);
+  const [wireFontSize, setWireFontSize] = useState(DEFAULT_FONT_SIZE);
+
   useEffect(() => {
     if (!activity) return;
     const tick = () => setElapsed(Math.floor((Date.now() - activity.startedAt) / 1000));
@@ -89,20 +107,24 @@ function PromptNode({ id, data, width, height, selected }: NodeProps<PromptFlowN
     return () => clearInterval(timer);
   }, [activity]);
 
-  // Other nodes' names, kept reactive via a joined string so renames elsewhere
-  // update this node's chips/autocomplete without re-rendering on every drag.
+  // Other nodes' names and tabs, kept reactive via a joined string so renames
+  // and tab switches elsewhere update this node's chips/autocomplete without
+  // re-rendering on every drag.
   const mentionKey = useStore((s) =>
     s.nodes
-      .map((n) => `${n.id}\u0000${(n.data as PromptNodeData).name?.trim() ?? ""}`)
+      .map((n) => {
+        const nodeData = n.data as PromptNodeData;
+        return `${n.id}\u0000${nodeData.name?.trim() ?? ""}\u0000${nodeData.tab ?? "chat"}`;
+      })
       .join("\u0001")
   );
   const mentionables = useMemo<Mentionable[]>(
     () =>
       mentionKey
         .split("\u0001")
-        .map((pair) => {
-          const [nodeId, name] = pair.split("\u0000");
-          return { id: nodeId, name };
+        .map((entry) => {
+          const [nodeId, name, tab] = entry.split("\u0000");
+          return { id: nodeId, name, tab: tab as NodeTab };
         })
         .filter((m) => m.name && m.id !== id),
     [mentionKey, id]
@@ -123,9 +145,10 @@ function PromptNode({ id, data, width, height, selected }: NodeProps<PromptFlowN
   const previewMarkdown = useDebouncedValue(data.markdown ?? "");
   const previewHtml = useDebouncedValue(data.html ?? "");
 
-  // The md tab previews the markdown; every other tab previews the generated
-  // document. Hiding the sidebar keeps whichever tab was last selected, so the
-  // preview does not change out from under you.
+  // The md tab previews the markdown; chat and html preview the generated
+  // document (draw/wire/photo render their own panes instead). Hiding the
+  // sidebar keeps whichever tab was last selected, so the preview does not
+  // change out from under you.
   const srcDoc = useMemo(() => {
     if (tab === "md") {
       return previewMarkdown.trim() ? markdownDocument(previewMarkdown) : null;
@@ -163,17 +186,19 @@ function PromptNode({ id, data, width, height, selected }: NodeProps<PromptFlowN
     setActivity({ startedAt: Date.now(), tool: null });
 
     // Mentions expand into the API copy of this turn only; the stored
-    // transcript keeps the raw @name text for chip rendering.
+    // transcript keeps the raw @name text for chip rendering. Mentioned nodes
+    // on an image tab (draw/wire/photo) contribute their output as attachments.
     const mentionTargets = getNodes()
       .filter((n) => n.id !== id && n.data.name?.trim())
       .map((n) => ({ name: n.data.name!.trim(), data: n.data }));
     const context = buildMentionContext(prompt, mentionTargets);
+    const apiImages = [...images, ...(context?.images ?? [])];
     const apiMessages: ChatMessage[] = [
       ...priorMessages,
       {
         role: "user",
-        content: context ? `${prompt}\n\n${context}` : prompt,
-        ...(images.length ? { images } : {}),
+        content: context ? `${prompt}\n\n${context.text}` : prompt,
+        ...(apiImages.length ? { images: apiImages } : {}),
       },
     ];
 
@@ -253,6 +278,20 @@ function PromptNode({ id, data, width, height, selected }: NodeProps<PromptFlowN
     deleteElements({ nodes: [{ id }] });
   }
 
+  // Default names follow the node's type ("wireframe 1", "md 2", …), so a tab
+  // switch re-labels them; a name the user typed themselves is never touched.
+  function selectTab(next: NodeTab) {
+    const current = data.name?.trim() ?? "";
+    if (!isDefaultNodeName(current) || (current && matchesTabLabel(current, next))) {
+      updateNodeData(id, { tab: next });
+      return;
+    }
+    const taken = getNodes()
+      .filter((n) => n.id !== id)
+      .map((n) => n.data.name);
+    updateNodeData(id, { tab: next, name: defaultNodeName(next, taken) });
+  }
+
   function findByName(name: string) {
     return getNodes().find((n) => n.id !== id && n.data.name?.trim() === name);
   }
@@ -261,7 +300,12 @@ function PromptNode({ id, data, width, height, selected }: NodeProps<PromptFlowN
     const node = findByName(name);
     if (!node) return null;
     return {
+      tab: node.data.tab ?? ("chat" as NodeTab),
       html: node.data.html,
+      markdown: node.data.markdown ?? null,
+      drawing: node.data.drawing ?? null,
+      wireframe: node.data.wireframe ?? [],
+      photo: node.data.photo ?? null,
       width: node.width ?? DEFAULT_NODE_WIDTH,
       height: node.height ?? DEFAULT_NODE_HEIGHT,
     };
@@ -414,14 +458,14 @@ function PromptNode({ id, data, width, height, selected }: NodeProps<PromptFlowN
                 className="flex shrink-0 flex-col border-r border-neutral-200"
                 style={{ width: sidebarWidth }}
               >
-                <div className="flex gap-2 border-b border-neutral-200 p-2">
+                <div className="flex flex-wrap gap-2 border-b border-neutral-200 p-2">
                   {TABS.map((name) => (
                     <button
                       key={name}
                       className={`nodrag ${
                         tab === name ? "text-neutral-900" : "text-neutral-400 hover:text-neutral-900"
                       }`}
-                      onClick={() => updateNodeData(id, { tab: name })}
+                      onClick={() => selectTab(name)}
                     >
                       {name}
                     </button>
@@ -550,6 +594,35 @@ function PromptNode({ id, data, width, height, selected }: NodeProps<PromptFlowN
                     placeholder="# write an essay…"
                   />
                 )}
+
+                {tab === "draw" && (
+                  <DrawingToolbar
+                    settings={drawSettings}
+                    onChange={setDrawSettings}
+                    onUndo={() => drawingRef.current?.undo()}
+                    onClear={() => drawingRef.current?.clear()}
+                  />
+                )}
+
+                {tab === "wire" && (
+                  <WireframeToolbar
+                    elements={data.wireframe ?? []}
+                    tool={wireTool}
+                    selectedId={wireSelection}
+                    fontSize={wireFontSize}
+                    onToolChange={setWireTool}
+                    onSelect={setWireSelection}
+                    onChange={(wireframe) => updateNodeData(id, { wireframe })}
+                    onFontSizeChange={setWireFontSize}
+                  />
+                )}
+
+                {tab === "photo" && (
+                  <PhotoToolbar
+                    photo={data.photo ?? null}
+                    onChange={(photo) => updateNodeData(id, { photo })}
+                  />
+                )}
               </div>
 
               <div
@@ -561,7 +634,29 @@ function PromptNode({ id, data, width, height, selected }: NodeProps<PromptFlowN
           )}
 
           <div className="min-w-0 flex-1">
-            {srcDoc ? (
+            {tab === "draw" ? (
+              <DrawingPane
+                drawing={data.drawing ?? null}
+                settings={drawSettings}
+                onCommit={(drawing) => updateNodeData(id, { drawing })}
+                handleRef={drawingRef}
+              />
+            ) : tab === "wire" ? (
+              <WireframePane
+                elements={data.wireframe ?? []}
+                tool={wireTool}
+                selectedId={wireSelection}
+                fontSize={wireFontSize}
+                onToolChange={setWireTool}
+                onSelect={setWireSelection}
+                onChange={(wireframe) => updateNodeData(id, { wireframe })}
+              />
+            ) : tab === "photo" ? (
+              <PhotoPane
+                photo={data.photo ?? null}
+                onChange={(photo) => updateNodeData(id, { photo })}
+              />
+            ) : srcDoc ? (
               <iframe
                 className="h-full w-full"
                 sandbox="allow-scripts"

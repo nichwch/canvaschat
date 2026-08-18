@@ -1,8 +1,11 @@
-import type { ChatMessage, PromptNodeData } from "./types";
+import type { ChatMessage, NodeTab, PromptNodeData } from "./types";
+import { wireframeToDataUrl } from "./wireframe";
 
 export type Mentionable = {
   id: string;
   name: string;
+  /** Colors the chip and picks its icon by the node's output type. */
+  tab: NodeTab;
 };
 
 export type MentionPart =
@@ -51,23 +54,64 @@ function recentPrompts(messages: ChatMessage[], limit = 3): string[] {
     .map((m) => m.content.slice(0, 300));
 }
 
+export type MentionContext = {
+  text: string;
+  /** Image outputs of mentioned nodes, in the order their blocks appear in `text`. */
+  images: string[];
+};
+
 /**
- * Builds the context block for @mentions in a prompt: each mentioned node's
- * rendered html plus its recent prompts. Injected into the API copy of the
- * user turn only — the stored transcript keeps the raw text.
+ * A node's output follows its selected tab: chat and html send the rendered
+ * document, md sends the markdown, and draw/wire/photo attach an image.
+ */
+function nodeOutput(data: PromptNodeData): { text: string; image?: string } {
+  switch (data.tab ?? "chat") {
+    case "md":
+      return data.markdown?.trim()
+        ? { text: `<document type="markdown">\n${data.markdown}\n</document>` }
+        : { text: "(nothing written yet)" };
+    case "draw":
+      return data.drawing
+        ? { text: "(output: a hand-drawn sketch, attached to this message as an image)", image: data.drawing }
+        : { text: "(nothing drawn yet)" };
+    case "wire": {
+      const image = wireframeToDataUrl(data.wireframe ?? []);
+      return image
+        ? { text: "(output: a wireframe, attached to this message as an image)", image }
+        : { text: "(empty wireframe)" };
+    }
+    case "photo":
+      return data.photo
+        ? { text: "(output: an uploaded photo, attached to this message as an image)", image: data.photo }
+        : { text: "(no photo uploaded yet)" };
+    default:
+      return data.html
+        ? { text: `<document>\n${data.html}\n</document>` }
+        : { text: "(nothing rendered yet)" };
+  }
+}
+
+/**
+ * Builds the context for @mentions in a prompt: each mentioned node's output
+ * (per its selected tab) plus its recent prompts. Image outputs are returned
+ * separately for attachment. Injected into the API copy of the user turn
+ * only — the stored transcript keeps the raw text.
  */
 export function buildMentionContext(
   prompt: string,
   nodes: { name: string; data: PromptNodeData }[]
-): string | null {
+): MentionContext | null {
   const mentioned = nodes.filter((n) => prompt.includes(`@${n.name}`));
   if (!mentioned.length) return null;
 
+  const images: string[] = [];
   const blocks = mentioned.map(({ name, data }) => {
+    const output = nodeOutput(data);
+    if (output.image) images.push(output.image);
     const prompts = recentPrompts(data.messages);
     return [
       `<referenced-node name=${JSON.stringify(name)}>`,
-      data.html ? `<document>\n${data.html}\n</document>` : "(nothing rendered yet)",
+      output.text,
       prompts.length ? `<recent-prompts>\n${prompts.map((p) => `- ${p}`).join("\n")}\n</recent-prompts>` : "",
       `</referenced-node>`,
     ]
@@ -75,5 +119,8 @@ export function buildMentionContext(
       .join("\n");
   });
 
-  return `The @-mentions above refer to the user's other prototypes:\n\n${blocks.join("\n\n")}`;
+  const intro = images.length
+    ? "The @-mentions above refer to the user's other nodes. Image outputs are attached to this message after any images the user attached themselves, in the order the nodes appear below:"
+    : "The @-mentions above refer to the user's other nodes:";
+  return { text: `${intro}\n\n${blocks.join("\n\n")}`, images };
 }

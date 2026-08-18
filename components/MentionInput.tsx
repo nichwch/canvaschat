@@ -3,10 +3,7 @@
 import { useRef, useState } from "react";
 import type { Mentionable } from "@/lib/mentions";
 import { isImageFile, prepareImage } from "@/lib/images";
-
-/** Matches the user's mockup; also used for transcript chips. */
-export const MENTION_CHIP_CLASS =
-  "mention-chip mx-0.5 px-1.5 bg-red-100 border border-red-300 text-red-500";
+import { KindIcon, kindIconSvg, kindTextClass, mentionChipClass, outputKind } from "./nodeKinds";
 
 /**
  * Plain-text chat input with @mention chips. The DOM is the source of truth
@@ -84,11 +81,18 @@ export default function MentionInput({
     hit.node.deleteData(hit.start, hit.end - hit.start);
     const rest = hit.node.splitText(hit.start);
 
+    // Colored by the node's output type at insertion time; the transcript chip
+    // re-resolves the type on every render once the message is sent.
+    const kind = outputKind(option.tab);
     const chip = document.createElement("span");
     chip.contentEditable = "false";
     chip.dataset.mention = option.name;
-    chip.className = MENTION_CHIP_CLASS;
+    chip.className = mentionChipClass(kind);
     chip.textContent = `@${option.name}`;
+    const icon = document.createElement("span");
+    icon.className = "ml-1 inline-flex align-[-1px]";
+    icon.innerHTML = kindIconSvg(kind);
+    chip.appendChild(icon);
 
     const space = document.createTextNode(" ");
     rest.parentNode!.insertBefore(chip, rest);
@@ -170,14 +174,15 @@ export default function MentionInput({
           {filtered.map((option, i) => (
             <button
               key={option.id}
-              className={`block w-full px-2 py-1 text-left ${
-                i === activeIndex ? "bg-red-50 text-red-500" : "text-neutral-600"
+              className={`flex w-full items-center gap-2 px-2 py-1 text-left ${
+                i === activeIndex ? "bg-neutral-100 text-neutral-900" : "text-neutral-600"
               }`}
               onMouseDown={(e) => e.preventDefault()}
               onClick={() => insertMention(option)}
               onMouseEnter={() => setActive(i)}
             >
-              @{option.name}
+              <span className="min-w-0 flex-1 truncate">@{option.name}</span>
+              <KindIcon kind={outputKind(option.tab)} className={kindTextClass(outputKind(option.tab))} />
             </button>
           ))}
         </div>

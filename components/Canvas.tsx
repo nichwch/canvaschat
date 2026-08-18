@@ -15,10 +15,12 @@ import {
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import PromptNode, { type PromptFlowNode } from "./PromptNode";
+import NodePanel from "./NodePanel";
 import SettingsModal from "./SettingsModal";
 import { CanvasIdProvider } from "./CanvasContext";
 import { ForkIcon, GearIcon } from "./icons";
 import { forkCanvas, getApiKey, getCanvas, loadNodes, renameCanvas, saveNodes } from "@/lib/storage";
+import { defaultNodeName } from "@/lib/nodeNames";
 import { exportCanvas, filenameFor } from "@/lib/export";
 import {
   DEFAULT_MODEL,
@@ -54,6 +56,9 @@ function toStoredNodes(nodes: PromptFlowNode[]): StoredNode[] {
       messages: data.messages,
       html: data.html,
       markdown: data.markdown,
+      drawing: data.drawing,
+      wireframe: data.wireframe,
+      photo: data.photo,
       name: data.name,
       versions: data.versions,
       usage: data.usage,
@@ -166,7 +171,11 @@ function CanvasInner({ canvasId, name }: { canvasId: string; name: string }) {
         height: DEFAULT_NODE_HEIGHT,
         dragHandle: DRAG_HANDLE_SELECTOR,
         selected: true,
-        data: newNodeData(),
+        data: {
+          ...newNodeData(),
+          // New nodes open on chat; switching tabs re-labels default names.
+          name: defaultNodeName("chat", current.map((n) => n.data.name)),
+        },
       },
     ]);
   }, [screenToFlowPosition]);
@@ -190,6 +199,7 @@ function CanvasInner({ canvasId, name }: { canvasId: string; name: string }) {
         onAdd={addNode}
         onOpenSettings={() => setSettingsOpen(true)}
       />
+      <NodePanel nodes={nodes} />
       <ReactFlow
         nodes={nodes}
         onNodesChange={onNodesChange}
