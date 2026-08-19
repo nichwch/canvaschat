@@ -118,7 +118,15 @@ ${body}
 </html>`;
 }
 
+function slugify(canvasName: string): string {
+  return canvasName.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "canvas";
+}
+
 export function filenameFor(canvasName: string): string {
-  const slug = canvasName.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
-  return `${slug || "canvas"}.html`;
+  return `${slugify(canvasName)}.html`;
+}
+
+/** The editable canvas: nodes, chat, drawings — same shape as a folder-backed file. */
+export function filenameForCanvas(canvasName: string): string {
+  return `${slugify(canvasName)}.json`;
 }

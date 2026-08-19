@@ -5,8 +5,23 @@ export type ToolCall = {
   function: { name: string; arguments: string };
 };
 
+/** A comment pinned to an element in the HTML preview, in the Agentation style. */
+export type HtmlAnnotation = {
+  id: string;
+  /** 1-based marker number, matching the badge in the preview. */
+  n: number;
+  /** Short label shown on the cursor and chip, e.g. `button.submit-btn`. */
+  label: string;
+  /** CSS selector path the model can grep for. */
+  selector: string;
+  tag: string;
+  /** Nearby text content, when the element has any. */
+  text?: string;
+  comment: string;
+};
+
 export type ChatMessage =
-  | { role: "user"; content: string; images?: string[] }
+  | { role: "user"; content: string; images?: string[]; annotations?: HtmlAnnotation[] }
   | {
       role: "assistant";
       content: string | null;
@@ -90,6 +105,10 @@ export type PromptNodeData = {
   wireframe?: WireframeElement[];
   /** Uploaded reference photo from the photo tab, as a data URL. */
   photo?: string | null;
+  /** Freehand marks on the photo, in the image's natural pixel space. */
+  photoStrokes?: DrawStroke[];
+  /** Photo with strokes baked in; what mentions and previews send. */
+  photoMarked?: string | null;
   /** Referenced from other nodes' chats as @name. */
   name?: string;
   /** Nodes are exported unless this is set; scratch work can stay off the page. */

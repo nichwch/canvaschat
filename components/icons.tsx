@@ -165,6 +165,34 @@ export function EyeIcon({ className }: IconProps) {
   );
 }
 
+/** octicon: screen-full */
+export function ExpandIcon({ className }: IconProps) {
+  return (
+    <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.5" className={className} aria-hidden>
+      <path d="M2 6V2h4M10 2h4v4M14 10v4h-4M6 14H2v-4" />
+    </svg>
+  );
+}
+
+/** octicon: screen-normal */
+export function CollapseIcon({ className }: IconProps) {
+  return (
+    <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.5" className={className} aria-hidden>
+      <path d="M6 2v4H2M10 2v4h4M6 14v-4H2M10 14v-4h4" />
+    </svg>
+  );
+}
+
+/** Crosshair / inspect, for the Agentation-style annotate button. */
+export function AnnotateIcon({ className }: IconProps) {
+  return (
+    <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.5" className={className} aria-hidden>
+      <rect x="2.5" y="2.5" width="11" height="11" />
+      <path d="M8 2.5v11M2.5 8h11" />
+    </svg>
+  );
+}
+
 /** octicon: eye-closed */
 export function EyeClosedIcon({ className }: IconProps) {
   return (

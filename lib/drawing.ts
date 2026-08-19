@@ -135,3 +135,17 @@ export async function rasterizeDrawing(
 
   return canvas.toDataURL("image/png");
 }
+
+/** Bakes strokes onto a photo at its natural size, for mentions and previews. */
+export async function rasterizePhoto(photo: string, strokes: DrawStroke[]): Promise<string> {
+  const img = await loadImage(photo);
+  const canvas = document.createElement("canvas");
+  canvas.width = img.naturalWidth || img.width;
+  canvas.height = img.naturalHeight || img.height;
+  const ctx = canvas.getContext("2d")!;
+  ctx.fillStyle = "#fff";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.drawImage(img, 0, 0);
+  paintStrokes(ctx, strokes);
+  return canvas.toDataURL("image/jpeg", 0.9);
+}

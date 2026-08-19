@@ -2,7 +2,7 @@ const TAILWIND_CDN = "https://cdn.tailwindcss.com";
 const TAILWIND_TAG = `<script src="${TAILWIND_CDN}"></script>`;
 
 /** Inserts a tag as early as possible so it runs before the document's own scripts. */
-function injectHead(html: string, tag: string): string {
+export function injectHead(html: string, tag: string): string {
   if (/<head[^>]*>/i.test(html)) return html.replace(/<head[^>]*>/i, (head) => head + tag);
   if (/<html[^>]*>/i.test(html)) {
     return html.replace(/<html[^>]*>/i, (open) => `${open}<head>${tag}</head>`);

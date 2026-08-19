@@ -19,9 +19,18 @@ import NodePanel from "./NodePanel";
 import SettingsModal from "./SettingsModal";
 import { CanvasIdProvider } from "./CanvasContext";
 import { ForkIcon, GearIcon } from "./icons";
-import { forkCanvas, getApiKey, getCanvas, loadNodes, renameCanvas, saveNodes } from "@/lib/storage";
+import {
+  forkCanvas,
+  getApiKey,
+  getCanvas,
+  getInstructions,
+  loadNodes,
+  renameCanvas,
+  saveNodes,
+  type CanvasFile,
+} from "@/lib/storage";
 import { defaultNodeName } from "@/lib/nodeNames";
-import { exportCanvas, filenameFor } from "@/lib/export";
+import { exportCanvas, filenameFor, filenameForCanvas } from "@/lib/export";
 import {
   DEFAULT_MODEL,
   DEFAULT_NODE_HEIGHT,
@@ -68,6 +77,8 @@ function toStoredNodes(nodes: PromptFlowNode[]): StoredNode[] {
       drawBase: data.drawBase,
       wireframe: data.wireframe,
       photo: data.photo,
+      photoStrokes: data.photoStrokes,
+      photoMarked: data.photoMarked,
       name: data.name,
       hidden: data.hidden,
       versions: data.versions,
@@ -201,6 +212,23 @@ function CanvasInner({ canvasId, name }: { canvasId: string; name: string }) {
     [canvasId, name, nodes]
   );
 
+  const buildCanvasFile = useCallback(() => {
+    const meta = getCanvas(canvasId);
+    const currentName = meta?.name ?? name;
+    const file: CanvasFile = {
+      id: canvasId,
+      name: currentName,
+      createdAt: meta?.createdAt ?? Date.now(),
+      updatedAt: Date.now(),
+      instructions: getInstructions(canvasId),
+      nodes: toStoredNodes(nodes),
+    };
+    return {
+      filename: filenameForCanvas(currentName),
+      json: `${JSON.stringify(file, null, 2)}\n`,
+    };
+  }, [canvasId, name, nodes]);
+
   return (
     <div className="relative h-dvh w-dvw">
       <TopBar
@@ -239,6 +267,7 @@ function CanvasInner({ canvasId, name }: { canvasId: string; name: string }) {
           canvasId={canvasId}
           onClose={hasKey ? () => setSettingsOpen(false) : undefined}
           buildExport={buildExport}
+          buildCanvasFile={buildCanvasFile}
           onKeyChange={(key) => setHasKey(Boolean(key.trim()))}
         />
       )}

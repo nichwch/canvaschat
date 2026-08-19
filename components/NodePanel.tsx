@@ -19,7 +19,7 @@ function nodeOutput(node: PromptFlowNode): NodeOutput {
     markdown: node.data.markdown ?? null,
     drawing: node.data.drawing ?? null,
     wireframe: node.data.wireframe ?? [],
-    photo: node.data.photo ?? null,
+    photo: node.data.photoMarked ?? node.data.photo ?? null,
     width: node.width ?? DEFAULT_NODE_WIDTH,
     height: node.height ?? DEFAULT_NODE_HEIGHT,
   };

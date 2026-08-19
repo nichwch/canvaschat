@@ -1,6 +1,7 @@
 "use client";
 
 import { memo, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { NodeResizer, useReactFlow, useStore, type Node, type NodeProps } from "@xyflow/react";
 import {
   DEFAULT_CHAT_INPUT_HEIGHT,
@@ -17,6 +18,7 @@ import {
   MIN_NODE_WIDTH,
   MIN_SIDEBAR_WIDTH,
   type ChatMessage,
+  type HtmlAnnotation,
   type NodeTab,
   type DrawStroke,
   type PromptNodeData,
@@ -26,11 +28,12 @@ import { CUSTOM_MODEL, MODEL_GROUPS, isKnownModel } from "@/lib/models";
 import { getApiKey, getInstructions } from "@/lib/storage";
 import { compactRun, looksLikeHtmlDocument, runAgent } from "@/lib/agent/loop";
 import { buildMentionContext, splitMentions, type Mentionable } from "@/lib/mentions";
+import { formatAnnotations, numberAnnotations, type AnnotateHover } from "@/lib/annotate";
 import { useCanvasId } from "./CanvasContext";
 import { useDebouncedValue } from "./useDebouncedValue";
 import { withTailwind } from "@/lib/preview";
 import { markdownDocument } from "@/lib/markdown";
-import { EyeClosedIcon, EyeIcon, ForkIcon, SidebarIcon, TrashIcon } from "./icons";
+import { EyeClosedIcon, EyeIcon, ForkIcon, SidebarIcon, TrashIcon, ExpandIcon, CollapseIcon, AnnotateIcon } from "./icons";
 import { KindIcon, TabIcon, kindTextClass, mentionChipClass, outputKind } from "./nodeKinds";
 import CodeEditor from "./CodeEditor";
 import MentionInput from "./MentionInput";
@@ -45,7 +48,9 @@ import {
 import { WireframePane, WireframeToolbar, type WireframeTool } from "./WireframePane";
 import { DEFAULT_FONT_SIZE } from "@/lib/wireframe";
 import { defaultNodeName, isDefaultNodeName, matchesTabLabel } from "@/lib/nodeNames";
-import { PhotoPane, PhotoToolbar } from "./PhotoPane";
+import { PhotoPane, PhotoToolbar, type PhotoPaneHandle } from "./PhotoPane";
+import HtmlPreview from "./HtmlPreview";
+import AnnotationWidget from "./AnnotationWidget";
 
 export type PromptFlowNode = Node<PromptNodeData, "prompt">;
 
@@ -99,6 +104,15 @@ function isToolFailure(content: string): boolean {
   return content.startsWith("error:") || / error\(s\):/.test(content);
 }
 
+/** Past annotation chips are expanded only on the API copy of a user turn. */
+function userContentForApi(m: Extract<ChatMessage, { role: "user" }>): string {
+  const notes = m.annotations?.length ? formatAnnotations(m.annotations) : "";
+  if (notes && m.content) return `${m.content}\n\n${notes}`;
+  return notes || m.content;
+}
+
+type AnnotationDraft = AnnotateHover & { x: number; y: number };
+
 function PromptNode({ id, data, width, height, selected }: NodeProps<PromptFlowNode>) {
   const { updateNodeData, deleteElements, setNodes, getNode, getNodes, getZoom, fitView } =
     useReactFlow<PromptFlowNode>();
@@ -118,6 +132,16 @@ function PromptNode({ id, data, width, height, selected }: NodeProps<PromptFlowN
   const [wireTool, setWireTool] = useState<WireframeTool>("select");
   const [wireSelection, setWireSelection] = useState<string | null>(null);
   const [wireFontSize, setWireFontSize] = useState(DEFAULT_FONT_SIZE);
+  const [photoSettings, setPhotoSettings] = useState<DrawingSettings>(DEFAULT_DRAWING_SETTINGS);
+  const photoRef = useRef<PhotoPaneHandle>(null);
+
+  const [fullscreen, setFullscreen] = useState(false);
+  const [annotating, setAnnotating] = useState(false);
+  const [annotations, setAnnotations] = useState<HtmlAnnotation[]>([]);
+  const [highlightId, setHighlightId] = useState<string | null>(null);
+  const [markersVisible, setMarkersVisible] = useState(true);
+  const [draft, setDraft] = useState<AnnotationDraft | null>(null);
+  const [draftComment, setDraftComment] = useState("");
 
   useEffect(() => {
     if (!activity) return;
@@ -126,6 +150,30 @@ function PromptNode({ id, data, width, height, selected }: NodeProps<PromptFlowN
     const timer = setInterval(tick, 1000);
     return () => clearInterval(timer);
   }, [activity]);
+
+  useEffect(() => {
+    function onKey(event: KeyboardEvent) {
+      if (event.key !== "Escape") return;
+      if (draft) {
+        setDraft(null);
+        setDraftComment("");
+        setAnnotating(true);
+        event.preventDefault();
+        return;
+      }
+      if (annotating) {
+        setAnnotating(false);
+        event.preventDefault();
+        return;
+      }
+      if (fullscreen) {
+        setFullscreen(false);
+        event.preventDefault();
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [annotating, draft, fullscreen]);
 
   // Other nodes' names and tabs, kept reactive via a joined string so renames
   // and tab switches elsewhere update this node's chips/autocomplete without
@@ -182,12 +230,18 @@ function PromptNode({ id, data, width, height, selected }: NodeProps<PromptFlowN
   async function send(prompt: string, images: string[]) {
     if (data.loading) return;
 
+    const pending = annotations;
     const userMessage: ChatMessage = {
       role: "user",
       content: prompt,
       ...(images.length ? { images } : {}),
+      ...(pending.length ? { annotations: pending } : {}),
     };
     const baseMessages: ChatMessage[] = [...data.messages, userMessage];
+    setAnnotations([]);
+    setAnnotating(false);
+    setDraft(null);
+    setDraftComment("");
     updateNodeData(id, {
       messages: baseMessages,
       loading: true,
@@ -198,11 +252,19 @@ function PromptNode({ id, data, width, height, selected }: NodeProps<PromptFlowN
 
     // Pre-agent transcripts stored whole documents in assistant turns; stub
     // them in the API copy — the route injects the current document anyway.
-    const priorMessages: ChatMessage[] = data.messages.map((m) =>
-      m.role === "assistant" && m.content && looksLikeHtmlDocument(m.content)
-        ? { ...m, content: "(rendered an earlier version of the document)" }
-        : m
-    );
+    const priorMessages: ChatMessage[] = data.messages.map((m) => {
+      if (m.role === "assistant" && m.content && looksLikeHtmlDocument(m.content)) {
+        return { ...m, content: "(rendered an earlier version of the document)" };
+      }
+      if (m.role === "user") {
+        return {
+          role: "user" as const,
+          content: userContentForApi(m),
+          ...(m.images?.length ? { images: m.images } : {}),
+        };
+      }
+      return m;
+    });
 
     const controller = new AbortController();
     abortRef.current = controller;
@@ -216,11 +278,12 @@ function PromptNode({ id, data, width, height, selected }: NodeProps<PromptFlowN
       .map((n) => ({ name: n.data.name!.trim(), data: n.data }));
     const context = buildMentionContext(prompt, mentionTargets);
     const apiImages = [...images, ...(context?.images ?? [])];
+    const extras = [context?.text, formatAnnotations(pending)].filter(Boolean).join("\n\n");
     const apiMessages: ChatMessage[] = [
       ...priorMessages,
       {
         role: "user",
-        content: context ? `${prompt}\n\n${context.text}` : prompt,
+        content: extras ? (prompt ? `${prompt}\n\n${extras}` : extras) : prompt,
         ...(apiImages.length ? { images: apiImages } : {}),
       },
     ];
@@ -328,7 +391,7 @@ function PromptNode({ id, data, width, height, selected }: NodeProps<PromptFlowN
       markdown: node.data.markdown ?? null,
       drawing: node.data.drawing ?? null,
       wireframe: node.data.wireframe ?? [],
-      photo: node.data.photo ?? null,
+      photo: node.data.photoMarked ?? node.data.photo ?? null,
       width: node.width ?? DEFAULT_NODE_WIDTH,
       height: node.height ?? DEFAULT_NODE_HEIGHT,
     };
@@ -345,7 +408,7 @@ function PromptNode({ id, data, width, height, selected }: NodeProps<PromptFlowN
     const startX = event.clientX;
     const startWidth = sidebarWidth;
     // Pointer deltas are in screen pixels; the node is drawn at the canvas zoom level.
-    const zoom = getZoom();
+    const zoom = fullscreen ? 1 : getZoom();
     const maxWidth = (width ?? DEFAULT_NODE_WIDTH) - MIN_PREVIEW_WIDTH;
 
     trackPointerDrag((moveEvent) => {
@@ -361,7 +424,7 @@ function PromptNode({ id, data, width, height, selected }: NodeProps<PromptFlowN
     event.stopPropagation();
     const startY = event.clientY;
     const startHeight = chatInputHeight;
-    const zoom = getZoom();
+    const zoom = fullscreen ? 1 : getZoom();
     const maxHeight =
       (height ?? DEFAULT_NODE_HEIGHT) - SIDEBAR_CHROME_HEIGHT - MIN_CHAT_LOG_HEIGHT;
 
@@ -376,25 +439,19 @@ function PromptNode({ id, data, width, height, selected }: NodeProps<PromptFlowN
     });
   }
 
-  return (
-    <>
-      <NodeResizer
-        minWidth={MIN_NODE_WIDTH}
-        minHeight={MIN_NODE_HEIGHT}
-        isVisible={selected}
-        color="#171717"
-        handleStyle={{ width: 8, height: 8, borderRadius: 0 }}
-      />
+  const card = (
       <div
         className={`flex h-full w-full flex-col border bg-white ${
-          selected ? "border-neutral-900" : "border-neutral-300"
+          selected || fullscreen ? "border-neutral-900" : "border-neutral-300"
         }`}
       >
         <div
-          className={`${DRAG_HANDLE_CLASS} flex cursor-grab items-center gap-2 border-b border-neutral-200 p-2 active:cursor-grabbing`}
+          className={`${DRAG_HANDLE_CLASS} flex min-w-0 items-center gap-2 border-b border-neutral-200 p-2 ${
+            fullscreen ? "cursor-default" : "cursor-grab active:cursor-grabbing"
+          }`}
         >
           <button
-            className="nodrag text-neutral-500 hover:text-neutral-900"
+            className="nodrag shrink-0 text-neutral-500 hover:text-neutral-900"
             onClick={() => updateNodeData(id, { sidebarCollapsed: !collapsed })}
             title={collapsed ? "show chat sidebar" : "hide chat sidebar"}
             aria-label={collapsed ? "show chat sidebar" : "hide chat sidebar"}
@@ -402,13 +459,14 @@ function PromptNode({ id, data, width, height, selected }: NodeProps<PromptFlowN
             <SidebarIcon collapsed={collapsed} />
           </button>
           {/* Styled as its own mention chip, so a node reads the same here and
-              wherever it is referenced. */}
-          <span className={mentionChipClass(kind)}>
+              wherever it is referenced. min-w-0 lets a long name shrink instead
+              of pushing the header actions off the node. */}
+          <span className={`${mentionChipClass(kind)} min-w-0 overflow-hidden`}>
             {/* One flex item, so the chip's gap falls only before the icon. */}
-            <span className="inline-flex items-center">
+            <span className="flex min-w-0 flex-1 items-center">
               @
               <input
-                className="nodrag cursor-text bg-transparent outline-none placeholder:opacity-50"
+                className="nodrag min-w-0 max-w-full cursor-text bg-transparent outline-none placeholder:opacity-50"
                 style={{ width: `${Math.max((data.name ?? "").length, 4)}ch` }}
                 value={data.name ?? ""}
                 onChange={(e) => updateNodeData(id, { name: e.target.value })}
@@ -420,7 +478,7 @@ function PromptNode({ id, data, width, height, selected }: NodeProps<PromptFlowN
             <KindIcon kind={kind} />
           </span>
           <select
-            className="nodrag cursor-pointer bg-white text-neutral-500 outline-none hover:text-neutral-900"
+            className="nodrag shrink-0 cursor-pointer bg-white text-neutral-500 outline-none hover:text-neutral-900"
             value={customModel ? CUSTOM_MODEL : data.model}
             onChange={(e) => {
               if (e.target.value === CUSTOM_MODEL) {
@@ -445,7 +503,7 @@ function PromptNode({ id, data, width, height, selected }: NodeProps<PromptFlowN
           </select>
           {customModel && (
             <input
-              className="nodrag w-56 cursor-text text-neutral-500 outline-none"
+              className="nodrag min-w-0 w-40 shrink cursor-text text-neutral-500 outline-none"
               value={data.model}
               onChange={(e) => updateNodeData(id, { model: e.target.value })}
               placeholder="provider/model"
@@ -454,7 +512,7 @@ function PromptNode({ id, data, width, height, selected }: NodeProps<PromptFlowN
             />
           )}
           <select
-            className="nodrag cursor-pointer bg-white text-neutral-400 outline-none hover:text-neutral-900"
+            className="nodrag shrink-0 cursor-pointer bg-white text-neutral-400 outline-none hover:text-neutral-900"
             value={data.reasoning ?? DEFAULT_REASONING}
             onChange={(e) => updateNodeData(id, { reasoning: e.target.value as ReasoningEffort })}
             title="reasoning effort — how long the model may think before acting"
@@ -465,24 +523,35 @@ function PromptNode({ id, data, width, height, selected }: NodeProps<PromptFlowN
               </option>
             ))}
           </select>
-          <span className="flex-1" />
+          <span className="min-w-0 flex-1" />
+          <span className="group relative inline-flex shrink-0">
+            <button
+              className={`nodrag ${
+                hidden ? "text-neutral-300 hover:text-neutral-500" : "text-neutral-500 hover:text-neutral-900"
+              }`}
+              onClick={() => updateNodeData(id, { hidden: !hidden })}
+              aria-label={hidden ? "include in export" : "exclude from export"}
+              aria-pressed={!hidden}
+            >
+              {hidden ? <EyeClosedIcon /> : <EyeIcon />}
+            </button>
+            <span className="pointer-events-none absolute top-full right-0 z-30 mt-1 hidden w-52 border border-neutral-300 bg-white p-2 text-neutral-500 group-hover:block">
+              {hidden
+                ? "Hidden — this node is left out of the canvas export. Click to include it in the generated page."
+                : "Visible — this node is included in the canvas export. Click to hide it from the generated page."}
+            </span>
+          </span>
           <button
-            className={`nodrag ${
-              hidden ? "text-neutral-300 hover:text-neutral-500" : "text-neutral-500 hover:text-neutral-900"
-            }`}
-            onClick={() => updateNodeData(id, { hidden: !hidden })}
-            title={
-              hidden
-                ? "hidden — this node is left out of the canvas export"
-                : "visible — this node is included in the canvas export"
-            }
-            aria-label={hidden ? "include in export" : "exclude from export"}
-            aria-pressed={!hidden}
+            className="nodrag shrink-0 text-neutral-500 hover:text-neutral-900"
+            onClick={() => setFullscreen((open) => !open)}
+            title={fullscreen ? "exit fullscreen" : "fullscreen — iterate on this node focused"}
+            aria-label={fullscreen ? "exit fullscreen" : "fullscreen"}
+            aria-pressed={fullscreen}
           >
-            {hidden ? <EyeClosedIcon /> : <EyeIcon />}
+            {fullscreen ? <CollapseIcon /> : <ExpandIcon />}
           </button>
           <button
-            className="nodrag text-neutral-500 hover:text-neutral-900"
+            className="nodrag shrink-0 text-neutral-500 hover:text-neutral-900"
             onClick={fork}
             title="fork"
             aria-label="fork"
@@ -490,7 +559,7 @@ function PromptNode({ id, data, width, height, selected }: NodeProps<PromptFlowN
             <ForkIcon />
           </button>
           <button
-            className="nodrag text-neutral-500 hover:text-red-600"
+            className="nodrag shrink-0 text-neutral-500 hover:text-red-600"
             onClick={remove}
             title="delete"
             aria-label="delete"
@@ -539,6 +608,13 @@ function PromptNode({ id, data, width, height, selected }: NodeProps<PromptFlowN
                         if (m.role === "user") {
                           return (
                             <p key={i} className="m-2 whitespace-pre-wrap">
+                              {m.annotations && m.annotations.length > 0 && (
+                                <span className="mb-1 flex flex-wrap gap-1">
+                                  {m.annotations.map((a) => (
+                                    <AnnotationWidget key={a.id} annotation={a} onHover={() => {}} />
+                                  ))}
+                                </span>
+                              )}
                               {m.images && m.images.length > 0 && (
                                 <span className="mb-1 flex flex-wrap gap-1">
                                   {m.images.map((src, k) => (
@@ -627,12 +703,75 @@ function PromptNode({ id, data, width, height, selected }: NodeProps<PromptFlowN
                       className="shrink-0 border-t border-neutral-200 p-2"
                       style={{ height: chatInputHeight }}
                     >
-                      <MentionInput
-                        getOptions={() => mentionables}
-                        placeholder="describe the interface… @ to reference another node"
-                        disabled={data.loading}
-                        onSubmit={send}
-                      />
+                      <div className="flex h-full min-h-0 gap-1">
+                        <div className="flex shrink-0 flex-col gap-1">
+                          <button
+                            className={`nodrag flex h-6 w-6 items-center justify-center border ${
+                              annotating
+                                ? "border-neutral-900 text-neutral-900"
+                                : srcDoc
+                                  ? "border-neutral-300 text-neutral-500 hover:border-neutral-900 hover:text-neutral-900"
+                                  : "border-neutral-200 text-neutral-300"
+                            }`}
+                            disabled={!srcDoc || data.loading}
+                            onClick={() => {
+                              if (!srcDoc) return;
+                              setAnnotating((on) => !on);
+                              setDraft(null);
+                              setDraftComment("");
+                            }}
+                            title={
+                              srcDoc
+                                ? "annotate — point at an element in the preview and leave a comment"
+                                : "nothing rendered yet"
+                            }
+                            aria-label="annotate preview"
+                            aria-pressed={annotating}
+                          >
+                            <AnnotateIcon />
+                          </button>
+                          {annotations.length > 0 && (
+                            <button
+                              className={`nodrag flex h-6 w-6 items-center justify-center border ${
+                                markersVisible
+                                  ? "border-neutral-300 text-neutral-500 hover:text-neutral-900"
+                                  : "border-neutral-900 text-neutral-900"
+                              }`}
+                              onClick={() => setMarkersVisible((on) => !on)}
+                              title={markersVisible ? "hide markers" : "show markers"}
+                              aria-label={markersVisible ? "hide markers" : "show markers"}
+                              aria-pressed={!markersVisible}
+                            >
+                              {markersVisible ? <EyeIcon /> : <EyeClosedIcon />}
+                            </button>
+                          )}
+                        </div>
+                        <div className="min-h-0 min-w-0 flex-1">
+                          <MentionInput
+                            getOptions={() => mentionables}
+                            placeholder="describe the interface… @ to reference another node"
+                            disabled={data.loading}
+                            allowEmpty={annotations.length > 0}
+                            extraAttachments={
+                              annotations.length
+                                ? annotations.map((a) => (
+                                    <AnnotationWidget
+                                      key={a.id}
+                                      annotation={a}
+                                      onHover={setHighlightId}
+                                      onRemove={() =>
+                                        setAnnotations((current) =>
+                                          numberAnnotations(current.filter((x) => x.id !== a.id))
+                                        )
+                                      }
+                                    />
+                                  ))
+                                : null
+                            }
+                            onSubmit={send}
+                          />
+                        </div>
+                      </div>
                     </div>
                   </>
                 )}
@@ -682,7 +821,14 @@ function PromptNode({ id, data, width, height, selected }: NodeProps<PromptFlowN
                 {tab === "photo" && (
                   <PhotoToolbar
                     photo={data.photo ?? null}
-                    onChange={(photo) => updateNodeData(id, { photo })}
+                    hasDrawings={(data.photoStrokes ?? []).length > 0}
+                    settings={photoSettings}
+                    onChange={(photo) =>
+                      updateNodeData(id, { photo, photoStrokes: [], photoMarked: null })
+                    }
+                    onSettingsChange={setPhotoSettings}
+                    onUndo={() => photoRef.current?.undo()}
+                    onClearDrawings={() => photoRef.current?.clearDrawings()}
                   />
                 )}
               </div>
@@ -718,14 +864,31 @@ function PromptNode({ id, data, width, height, selected }: NodeProps<PromptFlowN
             ) : tab === "photo" ? (
               <PhotoPane
                 photo={data.photo ?? null}
-                onChange={(photo) => updateNodeData(id, { photo })}
+                strokes={data.photoStrokes ?? EMPTY_STROKES}
+                settings={photoSettings}
+                onChange={(photo) =>
+                  updateNodeData(id, { photo, photoStrokes: [], photoMarked: null })
+                }
+                onCommit={(photoStrokes, photoMarked) =>
+                  updateNodeData(id, { photoStrokes, photoMarked })
+                }
+                handleRef={photoRef}
               />
             ) : srcDoc ? (
-              <iframe
-                className="h-full w-full"
-                sandbox="allow-scripts"
+              <HtmlPreview
                 srcDoc={srcDoc}
                 title="preview"
+                annotating={annotating && !draft}
+                annotations={annotations}
+                highlightId={highlightId}
+                markersVisible={markersVisible}
+                onHover={() => {}}
+                onLeave={() => {}}
+                onPick={(hover, screen) => {
+                  setAnnotating(false);
+                  setDraft({ ...hover, x: screen.x, y: screen.y });
+                  setDraftComment("");
+                }}
               />
             ) : (
               <div className="flex h-full items-center justify-center text-neutral-400">
@@ -739,6 +902,90 @@ function PromptNode({ id, data, width, height, selected }: NodeProps<PromptFlowN
           </div>
         </div>
       </div>
+  );
+
+  return (
+    <>
+      <NodeResizer
+        minWidth={MIN_NODE_WIDTH}
+        minHeight={MIN_NODE_HEIGHT}
+        isVisible={selected && !fullscreen}
+        color="#171717"
+        handleStyle={{ width: 8, height: 8, borderRadius: 0 }}
+      />
+      {fullscreen ? (
+        <>
+          <div className="flex h-full w-full items-center justify-center border border-neutral-300 bg-neutral-50 text-neutral-400">
+            fullscreen
+          </div>
+          {createPortal(
+            <div
+              className="fixed inset-0 z-50 flex items-center justify-center bg-neutral-900/30 p-6"
+              onPointerDown={() => setFullscreen(false)}
+            >
+              <div
+                className="h-[92vh] w-[92vw] overflow-hidden shadow-lg"
+                onPointerDown={(event) => event.stopPropagation()}
+              >
+                {card}
+              </div>
+            </div>,
+            document.body
+          )}
+        </>
+      ) : (
+        card
+      )}
+      {draft &&
+        createPortal(
+          <form
+            className="nodrag nowheel fixed z-[70] w-56 border border-neutral-900 bg-white p-1 shadow-sm"
+            style={{
+              left: Math.min(Math.max(8, draft.x), window.innerWidth - 240),
+              top: Math.min(Math.max(8, draft.y), window.innerHeight - 80),
+            }}
+            onSubmit={(event) => {
+              event.preventDefault();
+              const comment = draftComment.trim();
+              if (!comment) return;
+              setAnnotations((current) =>
+                numberAnnotations([
+                  ...current,
+                  {
+                    id: crypto.randomUUID(),
+                    n: 0,
+                    label: draft.label,
+                    selector: draft.selector,
+                    tag: draft.tag,
+                    text: draft.text,
+                    comment,
+                  },
+                ])
+              );
+              setDraft(null);
+              setDraftComment("");
+              setAnnotating(true);
+            }}
+          >
+            <p className="truncate px-1 text-neutral-400">{draft.label}</p>
+            <input
+              autoFocus
+              className="nodrag w-full px-1 outline-none"
+              placeholder="what should change?"
+              value={draftComment}
+              onChange={(event) => setDraftComment(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Escape") {
+                  event.preventDefault();
+                  setDraft(null);
+                  setDraftComment("");
+                  setAnnotating(true);
+                }
+              }}
+            />
+          </form>,
+          document.body
+        )}
     </>
   );
 }

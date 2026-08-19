@@ -102,12 +102,18 @@ type WirePart = { type: "text"; text: string } | { type: "image_url"; image_url:
 
 /** User messages with images become multimodal content parts on the wire. */
 function toWireMessage(m: ChatMessage): ChatMessage | { role: "user"; content: WirePart[] } {
-  if (m.role !== "user" || !m.images?.length) return m;
+  if (m.role !== "user") return m;
+  const user: Extract<ChatMessage, { role: "user" }> = {
+    role: "user",
+    content: m.content,
+    ...(m.images?.length ? { images: m.images } : {}),
+  };
+  if (!user.images?.length) return user;
   return {
     role: "user",
     content: [
-      ...(m.content ? [{ type: "text" as const, text: m.content }] : []),
-      ...m.images.map((url) => ({ type: "image_url" as const, image_url: { url } })),
+      ...(user.content ? [{ type: "text" as const, text: user.content }] : []),
+      ...user.images.map((url) => ({ type: "image_url" as const, image_url: { url } })),
     ],
   };
 }

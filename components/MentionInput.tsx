@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useRef, useState, type ReactNode } from "react";
 import type { Mentionable } from "@/lib/mentions";
 import { isImageFile, prepareImage } from "@/lib/images";
 import { KindIcon, kindIconSvg, kindTextClass, mentionChipClass, outputKind } from "./nodeKinds";
@@ -14,6 +14,8 @@ export default function MentionInput({
   getOptions,
   placeholder,
   disabled,
+  extraAttachments,
+  allowEmpty,
   onSubmit,
 }: {
   /** Called when the menu opens, so the list is always current without subscribing. */
@@ -21,6 +23,10 @@ export default function MentionInput({
   placeholder: string;
   /** While true, Enter keeps the draft instead of submitting into a busy node. */
   disabled?: boolean;
+  /** Widgets shown in the same row as attached photos (annotation chips, etc). */
+  extraAttachments?: ReactNode;
+  /** Allow submit with no text and no images (e.g. annotations waiting above). */
+  allowEmpty?: boolean;
   onSubmit: (text: string, images: string[]) => void;
 }) {
   const ref = useRef<HTMLDivElement>(null);
@@ -128,7 +134,7 @@ export default function MentionInput({
   function submit() {
     if (!ref.current || disabled) return;
     const text = serialize(ref.current).replace(/ /g, " ").trim();
-    if (!text && !images.length) return;
+    if (!text && !images.length && !allowEmpty) return;
     ref.current.innerHTML = "";
     setQuery(null);
     setImages([]);
@@ -187,8 +193,9 @@ export default function MentionInput({
           ))}
         </div>
       )}
-      {images.length > 0 && (
+      {(images.length > 0 || extraAttachments) && (
         <div className="nodrag mb-1 flex shrink-0 flex-wrap gap-1">
+          {extraAttachments}
           {images.map((src, i) => (
             <span key={i} className="relative">
               {/* eslint-disable-next-line @next/next/no-img-element -- data URL thumbnail */}

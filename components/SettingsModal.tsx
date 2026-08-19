@@ -37,6 +37,7 @@ export default function SettingsModal({
   canvasId,
   onClose,
   buildExport,
+  buildCanvasFile,
   onKeyChange,
   onCanvasesChanged,
 }: {
@@ -46,6 +47,8 @@ export default function SettingsModal({
   onClose?: () => void;
   /** Omitted on the home page. Returns the file to offer, it does not download it. */
   buildExport?: (layout: ExportLayout) => { filename: string; html: string };
+  /** The editable canvas as JSON, same shape as a folder-backed file. */
+  buildCanvasFile?: () => { filename: string; json: string };
   onKeyChange?: (key: string) => void;
   /**
    * Passed only from the home page, which is where folders are managed and the
@@ -58,7 +61,8 @@ export default function SettingsModal({
     canvasId ? getInstructions(canvasId) : ""
   );
   const [layout, setLayoutState] = useState<ExportLayout>(getExportLayout);
-  const [saveNote, setSaveNote] = useState<string | null>(null);
+  const [htmlSaveNote, setHtmlSaveNote] = useState<string | null>(null);
+  const [fileSaveNote, setFileSaveNote] = useState<string | null>(null);
 
   const blocking = !onClose;
 
@@ -86,30 +90,48 @@ export default function SettingsModal({
     }
   }, [buildExport, layout]);
 
+  const canvasFile = useMemo(() => {
+    if (!buildCanvasFile) return null;
+    try {
+      const { filename, json } = buildCanvasFile();
+      const blob = new Blob([json], { type: "application/json" });
+      return { filename, blob, url: URL.createObjectURL(blob), size: blob.size, error: null };
+    } catch (err) {
+      return {
+        filename: "",
+        blob: null,
+        url: "",
+        size: 0,
+        error: err instanceof Error ? err.message : "export failed",
+      };
+    }
+  }, [buildCanvasFile]);
+
   /**
    * Chrome and Edge can open a real save dialog, which reports its own failures
    * instead of quietly doing nothing. Elsewhere the anchor's own download runs.
    */
-  async function save(event: React.MouseEvent) {
-    const picker = (window as unknown as { showSaveFilePicker?: SaveFilePicker })
-      .showSaveFilePicker;
-    if (!picker || !download?.blob) return;
+  async function save(
+    event: React.MouseEvent,
+    file: { filename: string; blob: Blob | null } | null,
+    types: { description: string; accept: Record<string, string[]> }[],
+    setNote: (note: string | null) => void
+  ) {
+    const picker = (window as unknown as { showSaveFilePicker?: SaveFilePicker }).showSaveFilePicker;
+    if (!picker || !file?.blob) return;
 
     event.preventDefault();
-    setSaveNote(null);
+    setNote(null);
     try {
-      const handle = await picker({
-        suggestedName: download.filename,
-        types: [{ description: "HTML", accept: { "text/html": [".html"] } }],
-      });
+      const handle = await picker({ suggestedName: file.filename, types });
       const writable = await handle.createWritable();
-      await writable.write(download.blob);
+      await writable.write(file.blob);
       await writable.close();
-      setSaveNote(`saved ${download.filename}`);
+      setNote(`saved ${file.filename}`);
     } catch (err) {
       // Dismissing the dialog is a normal outcome, not a failure.
       if (err instanceof DOMException && err.name === "AbortError") return;
-      setSaveNote(err instanceof Error ? `save failed: ${err.message}` : "save failed");
+      setNote(err instanceof Error ? `save failed: ${err.message}` : "save failed");
     }
   }
 
@@ -194,56 +216,103 @@ export default function SettingsModal({
           </div>
         )}
 
-        {download && (
+        {(download || canvasFile) && (
           <div className="p-3">
-            <span className="mb-1 block text-neutral-500">export canvas as html</span>
-            <div className="mb-2 flex flex-col gap-1">
-              {LAYOUTS.map((option) => (
-                <label key={option.value} className="flex cursor-pointer items-baseline gap-2">
-                  <input
-                    type="radio"
-                    name="export-layout"
-                    checked={layout === option.value}
-                    onChange={() => updateLayout(option.value)}
-                  />
-                  <span>{option.label}</span>
-                  <span className="text-neutral-400">— {option.hint}</span>
-                </label>
-              ))}
-            </div>
-            {download.error ? (
-              <p className="text-red-600">{download.error}</p>
-            ) : (
-              <>
-                <div className="flex items-center gap-3">
-                  <a
-                    className="flex items-center gap-2 border border-neutral-300 px-2 py-1 text-neutral-500 hover:border-neutral-900 hover:text-neutral-900"
-                    href={download.url}
-                    download={download.filename}
-                    onClick={save}
-                  >
-                    <DownloadIcon />
-                    download html
-                  </a>
-                  {/* Escape hatch if the browser suppresses the download outright. */}
-                  <a
-                    className="text-neutral-400 underline hover:text-neutral-900"
-                    href={download.url}
-                    target="_blank"
-                    rel="noreferrer"
-                  >
-                    open in new tab
-                  </a>
+            {download && (
+              <div className={canvasFile ? "mb-4" : undefined}>
+                <span className="mb-1 block text-neutral-500">export canvas as html</span>
+                <div className="mb-2 flex flex-col gap-1">
+                  {LAYOUTS.map((option) => (
+                    <label key={option.value} className="flex cursor-pointer items-baseline gap-2">
+                      <input
+                        type="radio"
+                        name="export-layout"
+                        checked={layout === option.value}
+                        onChange={() => updateLayout(option.value)}
+                      />
+                      <span>{option.label}</span>
+                      <span className="text-neutral-400">— {option.hint}</span>
+                    </label>
+                  ))}
                 </div>
-                <p className="mt-1 text-neutral-400">
-                  {download.filename} · {formatSize(download.size)}
-                </p>
-                {saveNote && (
-                  <p className={saveNote.includes("failed") ? "text-red-600" : "text-neutral-500"}>
-                    {saveNote}
-                  </p>
+                {download.error ? (
+                  <p className="text-red-600">{download.error}</p>
+                ) : (
+                  <>
+                    <div className="flex items-center gap-3">
+                      <a
+                        className="flex items-center gap-2 border border-neutral-300 px-2 py-1 text-neutral-500 hover:border-neutral-900 hover:text-neutral-900"
+                        href={download.url}
+                        download={download.filename}
+                        onClick={(event) =>
+                          save(event, download, [{ description: "HTML", accept: { "text/html": [".html"] } }], setHtmlSaveNote)
+                        }
+                      >
+                        <DownloadIcon />
+                        download html
+                      </a>
+                      {/* Escape hatch if the browser suppresses the download outright. */}
+                      <a
+                        className="text-neutral-400 underline hover:text-neutral-900"
+                        href={download.url}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        open in new tab
+                      </a>
+                    </div>
+                    <p className="mt-1 text-neutral-400">
+                      {download.filename} · {formatSize(download.size)}
+                    </p>
+                    {htmlSaveNote && (
+                      <p className={htmlSaveNote.includes("failed") ? "text-red-600" : "text-neutral-500"}>
+                        {htmlSaveNote}
+                      </p>
+                    )}
+                  </>
                 )}
-              </>
+              </div>
+            )}
+            {canvasFile && (
+              <div>
+                <span className="mb-1 block text-neutral-500">download canvas file</span>
+                <p className="mb-2 text-neutral-400">
+                  the editable canvas — nodes, chat, and drawings. same format as a folder-backed
+                  file.
+                </p>
+                {canvasFile.error ? (
+                  <p className="text-red-600">{canvasFile.error}</p>
+                ) : (
+                  <>
+                    <div className="flex items-center gap-3">
+                      <a
+                        className="flex items-center gap-2 border border-neutral-300 px-2 py-1 text-neutral-500 hover:border-neutral-900 hover:text-neutral-900"
+                        href={canvasFile.url}
+                        download={canvasFile.filename}
+                        onClick={(event) =>
+                          save(
+                            event,
+                            canvasFile,
+                            [{ description: "Canvas", accept: { "application/json": [".json"] } }],
+                            setFileSaveNote
+                          )
+                        }
+                      >
+                        <DownloadIcon />
+                        download json
+                      </a>
+                    </div>
+                    <p className="mt-1 text-neutral-400">
+                      {canvasFile.filename} · {formatSize(canvasFile.size)}
+                    </p>
+                    {fileSaveNote && (
+                      <p className={fileSaveNote.includes("failed") ? "text-red-600" : "text-neutral-500"}>
+                        {fileSaveNote}
+                      </p>
+                    )}
+                  </>
+                )}
+              </div>
             )}
           </div>
         )}

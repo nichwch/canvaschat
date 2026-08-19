@@ -80,10 +80,12 @@ function nodeOutput(data: PromptNodeData): { text: string; image?: string } {
         ? { text: "(output: a wireframe, attached to this message as an image)", image }
         : { text: "(empty wireframe)" };
     }
-    case "photo":
-      return data.photo
-        ? { text: "(output: an uploaded photo, attached to this message as an image)", image: data.photo }
+    case "photo": {
+      const image = data.photoMarked ?? data.photo;
+      return image
+        ? { text: "(output: an uploaded photo, attached to this message as an image)", image }
         : { text: "(no photo uploaded yet)" };
+    }
     default:
       return data.html
         ? { text: `<document>\n${data.html}\n</document>` }
